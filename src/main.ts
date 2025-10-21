@@ -43,7 +43,13 @@ let skeletonHelper: THREE.SkeletonHelper | null = null;
 let currentCharacterRoot: THREE.Object3D | null = null;
 
 const canvas = document.getElementById('c') as HTMLCanvasElement;
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+const renderer = new THREE.WebGLRenderer({ 
+  canvas, 
+  antialias: true,
+  powerPreference: 'high-performance', // Use dedicated GPU if available
+  stencil: false, // Disable stencil buffer if not needed
+});
+// Cap pixel ratio to reduce rendering load (especially on Retina/4K displays)
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -57,6 +63,8 @@ camera.position.set(4, 3, 6);
 
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
+controls.dampingFactor = 0.05;
+controls.maxPolarAngle = Math.PI / 1.5; // Prevent looking too far down
 
 // Enable shadow rendering
 renderer.shadowMap.enabled = true;
@@ -281,6 +289,49 @@ function createUI(clips: THREE.AnimationClip[]): void {
   label.textContent = 'Show Skeleton';
   skeletonToggle.appendChild(label);
   panel.appendChild(skeletonToggle);
+  
+  // FPS limiter control
+  const fpsControl = document.createElement('div');
+  fpsControl.style.cssText = `
+    margin-bottom: 12px;
+    padding: 8px;
+    background: rgba(50, 50, 50, 0.5);
+    border-radius: 4px;
+  `;
+  
+  const fpsLabel = document.createElement('label');
+  fpsLabel.style.cssText = `
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  `;
+  
+  const fpsText = document.createElement('span');
+  fpsText.textContent = `FPS Cap: ${targetFPS}`;
+  fpsText.style.fontSize = '11px';
+  fpsText.style.opacity = '0.8';
+  
+  const fpsSlider = document.createElement('input');
+  fpsSlider.type = 'range';
+  fpsSlider.min = '30';
+  fpsSlider.max = '120';
+  fpsSlider.value = targetFPS.toString();
+  fpsSlider.step = '10';
+  fpsSlider.style.cssText = `
+    width: 100%;
+    cursor: pointer;
+  `;
+  
+  fpsSlider.oninput = (e) => {
+    targetFPS = parseInt((e.target as HTMLInputElement).value);
+    frameInterval = 1000 / targetFPS;
+    fpsText.textContent = `FPS Cap: ${targetFPS}`;
+  };
+  
+  fpsLabel.appendChild(fpsText);
+  fpsLabel.appendChild(fpsSlider);
+  fpsControl.appendChild(fpsLabel);
+  panel.appendChild(fpsControl);
   
   // Debug button
   const debugBtn = document.createElement('button');
@@ -541,6 +592,21 @@ window.addEventListener('resize', onResize);
 // Track time for mixer updates
 const clock = new THREE.Clock();
 
+// Performance: Cap framerate to 60 FPS
+let targetFPS = 60;
+let frameInterval = 1000 / targetFPS;
+let lastFrameTime = 0;
+let isTabVisible = true;
+
+// Pause rendering when tab is not visible to save battery
+document.addEventListener('visibilitychange', () => {
+  isTabVisible = !document.hidden;
+  if (isTabVisible) {
+    // Resume clock to avoid huge delta jump
+    clock.start();
+  }
+});
+
 // Expose animation controls to window for debugging
 (window as any).animDebug = {
   playAnimation,
@@ -582,7 +648,19 @@ console.log('💡 Animation debug helpers available via window.animDebug');
 console.log('   - animDebug.play("ClipName") - play an animation');
 console.log('   - animDebug.list() - list all animations');
 
-function tick(): void {
+function tick(currentTime: number = 0): void {
+  requestAnimationFrame(tick);
+  
+  // Pause rendering when tab is not visible
+  if (!isTabVisible) return;
+  
+  // Frame rate limiting: skip frame if not enough time has passed
+  const elapsed = currentTime - lastFrameTime;
+  if (elapsed < frameInterval) return;
+  
+  // Update last frame time (with correction for drift)
+  lastFrameTime = currentTime - (elapsed % frameInterval);
+  
   stats.begin();
   
   const delta = clock.getDelta();
@@ -596,6 +674,5 @@ function tick(): void {
   renderer.render(scene, camera);
   
   stats.end();
-  requestAnimationFrame(tick);
 }
 tick();

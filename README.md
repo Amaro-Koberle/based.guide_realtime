@@ -11,6 +11,7 @@ Built with Three.js, TypeScript, and Vite.
 - Automatic skydome-based ambient lighting
 - Responsive design for desktop and mobile
 - **Runtime character animation system** with crossfading and multiple clip support
+- **Performance optimizations** with FPS limiting and auto-pause when tab is hidden
 
 ## Development
 
@@ -85,4 +86,25 @@ debugListClips(animationClipsArray)
 3. **Auto-Play**: Tries to play "Test_Baked" animation, with fallback to variations or first available clip
 4. **Runtime**: AnimationMixer updates every frame in the render loop
 5. **Crossfading**: Smooth transitions between animations with configurable fade duration
+
+## Performance Optimizations
+
+The app includes several optimizations to reduce battery drain and heat:
+
+### Automatic Features
+- ✅ **FPS Limiting**: Capped at 60 FPS by default (adjustable via UI slider)
+- ✅ **Tab Visibility Detection**: Automatically pauses rendering when tab is hidden
+- ✅ **Pixel Ratio Cap**: Limits to 2x to reduce load on high-DPI displays
+- ✅ **GPU Preference**: Uses dedicated GPU when available
+- ✅ **Optimized Renderer**: Disables unused buffers (stencil) for better performance
+
+### User Controls
+- **FPS Cap Slider**: Adjust between 30-120 FPS via UI panel
+- **Stats Panel**: Monitor real-time FPS and frame time
+- Lower FPS = cooler laptop, longer battery life
+
+### Why These Help
+- **120 FPS → 60 FPS**: ~50% reduction in GPU/CPU usage
+- **60 FPS → 30 FPS**: Another ~50% reduction (good for battery saving)
+- **Tab pause**: 100% GPU savings when not viewing
 
