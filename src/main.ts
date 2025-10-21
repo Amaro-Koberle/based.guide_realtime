@@ -219,9 +219,9 @@ function addCharacter(): void {
     }
   });
   
-  // Position character 0.5m in front of the last character
-  const positionZ = characterInstances.length * 0.5;
-  newChar.position.set(0, 0, -positionZ);
+  // Position characters in a row along X axis (side by side)
+  const positionX = (characterInstances.length - 10) * 0.8; // Center around origin
+  newChar.position.set(positionX, 0, 0);
   
   scene.add(newChar);
   characterInstances.push(newChar);
@@ -232,7 +232,7 @@ function addCharacter(): void {
     playAnimation(newChar, characterTemplate.animations[0].name, true, 0);
   }
   
-  console.log(`✓ Added character #${characterInstances.length} at z=${-positionZ}`);
+  console.log(`✓ Added character #${characterInstances.length} at x=${positionX}`);
 }
 
 function removeCharacter(): void {
@@ -491,7 +491,7 @@ function createUI(clips: THREE.AnimationClip[]): void {
   debugBtn.style.cssText = `
     width: 100%;
     padding: 6px;
-    margin-bottom: 12px;
+    margin-bottom: 6px;
     background: rgba(100, 100, 200, 0.2);
     color: white;
     border: 1px solid rgba(100, 100, 200, 0.4);
@@ -512,6 +512,100 @@ function createUI(clips: THREE.AnimationClip[]): void {
     }
   };
   panel.appendChild(debugBtn);
+  
+  // Performance profiler button
+  const perfBtn = document.createElement('button');
+  perfBtn.textContent = 'Log Performance Report';
+  perfBtn.style.cssText = `
+    width: 100%;
+    padding: 6px;
+    margin-bottom: 12px;
+    background: rgba(200, 100, 100, 0.2);
+    color: white;
+    border: 1px solid rgba(200, 100, 100, 0.4);
+    border-radius: 4px;
+    cursor: pointer;
+    font-family: monospace;
+    font-size: 10px;
+  `;
+  perfBtn.onclick = () => {
+    console.log('\n🔍 PERFORMANCE REPORT');
+    console.log('═══════════════════════════════════════');
+    
+    // Renderer info
+    console.log('\n📊 Renderer Info:');
+    console.log(`  Draw Calls: ${renderer.info.render.calls}`);
+    console.log(`  Triangles: ${renderer.info.render.triangles.toLocaleString()}`);
+    console.log(`  Points: ${renderer.info.render.points}`);
+    console.log(`  Lines: ${renderer.info.render.lines}`);
+    console.log(`  Geometries: ${renderer.info.memory.geometries}`);
+    console.log(`  Textures: ${renderer.info.memory.textures}`);
+    
+    // Renderer settings
+    console.log('\n⚙️ Renderer Settings:');
+    console.log(`  Pixel Ratio: ${renderer.getPixelRatio()}`);
+    console.log(`  Canvas Size: ${renderer.domElement.width}×${renderer.domElement.height}`);
+    console.log(`  Shadows Enabled: ${renderer.shadowMap.enabled}`);
+    console.log(`  Shadow Map Type: ${renderer.shadowMap.type}`);
+    console.log(`  Max Texture Size: ${renderer.capabilities.maxTextureSize}`);
+    
+    // Character info
+    console.log('\n👥 Characters:');
+    console.log(`  Count: ${characterInstances.length}`);
+    console.log(`  Animation Mixers: ${animationStates.size}`);
+    
+    let totalSkinnedMeshes = 0;
+    let totalBones = 0;
+    let totalVertices = 0;
+    
+    characterInstances.forEach((char, idx) => {
+      char.traverse((obj: THREE.Object3D) => {
+        if (obj instanceof THREE.SkinnedMesh) {
+          totalSkinnedMeshes++;
+          totalBones += obj.skeleton.bones.length;
+          totalVertices += obj.geometry.attributes.position.count;
+        }
+      });
+    });
+    
+    console.log(`  Total Skinned Meshes: ${totalSkinnedMeshes}`);
+    console.log(`  Total Bones: ${totalBones.toLocaleString()}`);
+    console.log(`  Total Vertices: ${totalVertices.toLocaleString()}`);
+    
+    // Scene complexity
+    console.log('\n🌍 Scene Complexity:');
+    let meshCount = 0;
+    let lightCount = 0;
+    scene.traverse((obj: THREE.Object3D) => {
+      if (obj instanceof THREE.Mesh) meshCount++;
+      if (obj instanceof THREE.Light) lightCount++;
+    });
+    console.log(`  Total Meshes: ${meshCount}`);
+    console.log(`  Total Lights: ${lightCount}`);
+    
+    // Check for potential bottlenecks
+    console.log('\n⚠️ Potential Bottlenecks:');
+    if (renderer.getPixelRatio() > 2) {
+      console.log(`  • High pixel ratio (${renderer.getPixelRatio()}) - reduce to 2 max`);
+    }
+    if (renderer.shadowMap.enabled) {
+      console.log(`  • Shadow maps enabled - can be expensive on mobile`);
+    }
+    if (totalVertices > 500000) {
+      console.log(`  • High vertex count (${totalVertices.toLocaleString()}) - consider LOD`);
+    }
+    
+    let usingBoneTextures = false;
+    scene.traverse((o: any) => {
+      if (o.skeleton?.boneTexture) usingBoneTextures = true;
+    });
+    if (!usingBoneTextures) {
+      console.log(`  • Bone textures NOT in use - may hit uniform limits with many characters`);
+    }
+    
+    console.log('\n═══════════════════════════════════════\n');
+  };
+  panel.appendChild(perfBtn);
   
   // Animation buttons
   if (clips.length > 0) {
@@ -611,9 +705,14 @@ async function loadAll(): Promise<void> {
     if (obj instanceof THREE.DirectionalLight) {
       obj.intensity = obj.intensity / 1000; // 1000x reduction
       obj.castShadow = true;
-      // Configure shadow quality
-      obj.shadow.mapSize.width = 4096;
-      obj.shadow.mapSize.height = 4096;
+      
+      // Adaptive shadow quality based on device
+      // Mobile devices get lower resolution shadows for better performance
+      const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+      const shadowMapSize = isMobile ? 1024 : 2048; // Reduced from 4096!
+      
+      obj.shadow.mapSize.width = shadowMapSize;
+      obj.shadow.mapSize.height = shadowMapSize;
       obj.shadow.camera.near = 0.1;
       obj.shadow.camera.far = 16;
       obj.shadow.camera.left = -8;
@@ -622,6 +721,8 @@ async function loadAll(): Promise<void> {
       obj.shadow.camera.bottom = -8;
       obj.shadow.bias = -0.0001;
       obj.shadow.normalBias = 0.02;
+      
+      console.log(`Shadow map size set to ${shadowMapSize}×${shadowMapSize} (${isMobile ? 'mobile' : 'desktop'})`);
     }
   });
   
@@ -904,7 +1005,7 @@ function tick(currentTime: number = 0): void {
   if (Math.floor(currentTime / 500) !== Math.floor(lastFrameTime / 500)) {
     const drawCallsEl = document.getElementById('drawCallsText');
     if (drawCallsEl) {
-      drawCallsEl.textContent = `Draw Calls: ${renderer.info.render.calls} | Tris: ${(renderer.info.render.triangles / 1000).toFixed(1)}k`;
+      drawCallsEl.textContent = `Draw Calls: ${renderer.info.render.calls} | Tris: ${(renderer.info.render.triangles / 1000).toFixed(1)}k | Geom: ${renderer.info.memory.geometries} | Tex: ${renderer.info.memory.textures}`;
     }
   }
   
