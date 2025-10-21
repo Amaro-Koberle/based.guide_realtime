@@ -47,6 +47,7 @@ let currentCharacterRoot: THREE.Object3D | null = null;
 let characterTemplate: any = null; // Store the loaded GLTF for cloning
 let characterInstances: THREE.Object3D[] = [];
 let currentCharacterCount = 1;
+let environmentScene: THREE.Group | null = null;
 
 const canvas = document.getElementById('c') as HTMLCanvasElement;
 const renderer = new THREE.WebGLRenderer({ 
@@ -377,7 +378,7 @@ function createUI(clips: THREE.AnimationClip[]): void {
     display: flex;
     align-items: center;
     gap: 8px;
-    margin-bottom: 12px;
+    margin-bottom: 8px;
     cursor: pointer;
   `;
   const checkbox = document.createElement('input');
@@ -389,6 +390,31 @@ function createUI(clips: THREE.AnimationClip[]): void {
   label.textContent = 'Show Skeleton';
   skeletonToggle.appendChild(label);
   panel.appendChild(skeletonToggle);
+  
+  // Environment toggle
+  const envToggle = document.createElement('label');
+  envToggle.style.cssText = `
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 12px;
+    cursor: pointer;
+  `;
+  const envCheckbox = document.createElement('input');
+  envCheckbox.type = 'checkbox';
+  envCheckbox.checked = true;
+  envCheckbox.onchange = (e) => {
+    if (environmentScene) {
+      environmentScene.visible = (e.target as HTMLInputElement).checked;
+      console.log(`Environment: ${environmentScene.visible ? 'visible' : 'hidden'}`);
+    }
+  };
+  envCheckbox.style.cursor = 'pointer';
+  envToggle.appendChild(envCheckbox);
+  const envLabel = document.createElement('span');
+  envLabel.textContent = 'Show Environment';
+  envToggle.appendChild(envLabel);
+  panel.appendChild(envToggle);
   
   // Character count control
   const charControl = document.createElement('div');
@@ -576,15 +602,33 @@ function createUI(clips: THREE.AnimationClip[]): void {
     console.log('\n🌍 Scene Complexity:');
     let meshCount = 0;
     let lightCount = 0;
+    let envMeshCount = 0;
+    
     scene.traverse((obj: THREE.Object3D) => {
       if (obj instanceof THREE.Mesh) meshCount++;
       if (obj instanceof THREE.Light) lightCount++;
     });
+    
+    if (environmentScene) {
+      environmentScene.traverse((obj: THREE.Object3D) => {
+        if (obj instanceof THREE.Mesh) envMeshCount++;
+      });
+    }
+    
     console.log(`  Total Meshes: ${meshCount}`);
+    console.log(`  Environment Meshes: ${envMeshCount} (${((envMeshCount/meshCount)*100).toFixed(1)}% of total!)`);
+    console.log(`  Character Meshes: ${meshCount - envMeshCount}`);
     console.log(`  Total Lights: ${lightCount}`);
     
     // Check for potential bottlenecks
     console.log('\n⚠️ Potential Bottlenecks:');
+    if (renderer.info.render.calls > 100) {
+      console.log(`  • TOO MANY DRAW CALLS (${renderer.info.render.calls})! Environment is killing performance.`);
+      console.log(`    Toggle off environment to test character-only performance.`);
+    }
+    if (envMeshCount > 50) {
+      console.log(`  • Environment has ${envMeshCount} meshes - should be merged/optimized`);
+    }
     if (renderer.getPixelRatio() > 2) {
       console.log(`  • High pixel ratio (${renderer.getPixelRatio()}) - reduce to 2 max`);
     }
@@ -599,7 +643,7 @@ function createUI(clips: THREE.AnimationClip[]): void {
     scene.traverse((o: any) => {
       if (o.skeleton?.boneTexture) usingBoneTextures = true;
     });
-    if (!usingBoneTextures) {
+    if (!usingBoneTextures && characterInstances.length > 5) {
       console.log(`  • Bone textures NOT in use - may hit uniform limits with many characters`);
     }
     
@@ -727,6 +771,7 @@ async function loadAll(): Promise<void> {
   });
   
   scene.add(env.scene);
+  environmentScene = env.scene;
 
   console.log('Loading character...');
   const char = await gltf.loadAsync('/models/CHAR_MrProBonobo.glb');
