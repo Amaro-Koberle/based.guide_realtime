@@ -48,6 +48,8 @@ let characterTemplate: any = null; // Store the loaded GLTF for cloning
 let characterInstances: THREE.Object3D[] = [];
 let currentCharacterCount = 1;
 let environmentScene: THREE.Group | null = null;
+let debugLight: THREE.DirectionalLight | null = null;
+let environmentMaterialsBackup: Map<THREE.Mesh, THREE.Material | THREE.Material[]> = new Map();
 
 const canvas = document.getElementById('c') as HTMLCanvasElement;
 const renderer = new THREE.WebGLRenderer({ 
@@ -268,6 +270,67 @@ function removeCharacter(): void {
     
     console.log(`✓ Removed character, ${characterInstances.length} remaining`);
   }
+}
+
+function toggleDebugLight(enabled: boolean): void {
+  if (enabled && !debugLight) {
+    // Create a simple directional light
+    debugLight = new THREE.DirectionalLight(0xffffff, 2);
+    debugLight.position.set(5, 10, 5);
+    debugLight.castShadow = false; // Don't cast shadows for performance
+    scene.add(debugLight);
+    console.log('✓ Debug light added');
+  } else if (!enabled && debugLight) {
+    scene.remove(debugLight);
+    debugLight = null;
+    console.log('✓ Debug light removed');
+  }
+}
+
+function applyGrayMaterialToEnvironment(): void {
+  if (!environmentScene) {
+    console.warn('No environment loaded');
+    return;
+  }
+  
+  // Create a simple gray material
+  const grayMaterial = new THREE.MeshStandardMaterial({
+    color: 0x808080,
+    roughness: 0.8,
+    metalness: 0.2
+  });
+  
+  let meshCount = 0;
+  environmentScene.traverse((obj: THREE.Object3D) => {
+    if (obj instanceof THREE.Mesh) {
+      // Backup original material if not already backed up
+      if (!environmentMaterialsBackup.has(obj)) {
+        environmentMaterialsBackup.set(obj, obj.material);
+      }
+      obj.material = grayMaterial;
+      meshCount++;
+    }
+  });
+  
+  console.log(`✓ Applied gray material to ${meshCount} environment meshes`);
+}
+
+function restoreEnvironmentMaterials(): void {
+  if (!environmentScene) {
+    console.warn('No environment loaded');
+    return;
+  }
+  
+  let meshCount = 0;
+  environmentScene.traverse((obj: THREE.Object3D) => {
+    if (obj instanceof THREE.Mesh && environmentMaterialsBackup.has(obj)) {
+      obj.material = environmentMaterialsBackup.get(obj)!;
+      meshCount++;
+    }
+  });
+  
+  environmentMaterialsBackup.clear();
+  console.log(`✓ Restored original materials to ${meshCount} environment meshes`);
 }
 
 function toggleSkeleton(visible: boolean): void {
@@ -538,6 +601,60 @@ function createUI(clips: THREE.AnimationClip[]): void {
     }
   };
   panel.appendChild(debugBtn);
+  
+  // Debug light button
+  const lightBtn = document.createElement('button');
+  lightBtn.textContent = '💡 Toggle Debug Light';
+  lightBtn.style.cssText = `
+    width: 100%;
+    padding: 6px;
+    margin-bottom: 6px;
+    background: rgba(200, 200, 100, 0.2);
+    color: white;
+    border: 1px solid rgba(200, 200, 100, 0.4);
+    border-radius: 4px;
+    cursor: pointer;
+    font-family: monospace;
+    font-size: 10px;
+  `;
+  let lightEnabled = false;
+  lightBtn.onclick = () => {
+    lightEnabled = !lightEnabled;
+    toggleDebugLight(lightEnabled);
+    lightBtn.style.background = lightEnabled ? 'rgba(200, 200, 100, 0.4)' : 'rgba(200, 200, 100, 0.2)';
+  };
+  panel.appendChild(lightBtn);
+  
+  // Gray material button
+  const grayBtn = document.createElement('button');
+  grayBtn.textContent = '🎨 Gray Environment Material';
+  grayBtn.style.cssText = `
+    width: 100%;
+    padding: 6px;
+    margin-bottom: 12px;
+    background: rgba(150, 150, 150, 0.2);
+    color: white;
+    border: 1px solid rgba(150, 150, 150, 0.4);
+    border-radius: 4px;
+    cursor: pointer;
+    font-family: monospace;
+    font-size: 10px;
+  `;
+  let grayApplied = false;
+  grayBtn.onclick = () => {
+    if (!grayApplied) {
+      applyGrayMaterialToEnvironment();
+      grayBtn.textContent = '🎨 Restore Original Materials';
+      grayBtn.style.background = 'rgba(150, 150, 150, 0.4)';
+      grayApplied = true;
+    } else {
+      restoreEnvironmentMaterials();
+      grayBtn.textContent = '🎨 Gray Environment Material';
+      grayBtn.style.background = 'rgba(150, 150, 150, 0.2)';
+      grayApplied = false;
+    }
+  };
+  panel.appendChild(grayBtn);
   
   // Performance profiler button
   const perfBtn = document.createElement('button');
