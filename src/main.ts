@@ -4,6 +4,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { KTX2Loader } from 'three/examples/jsm/loaders/KTX2Loader.js';
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 import { SkeletonHelper } from 'three';
+import * as SkeletonUtils from 'three/examples/jsm/utils/SkeletonUtils.js';
 import Stats from 'stats.js';
 
 /**
@@ -41,6 +42,11 @@ document.body.appendChild(stats.dom);
 // Debug helpers
 let skeletonHelper: THREE.SkeletonHelper | null = null;
 let currentCharacterRoot: THREE.Object3D | null = null;
+
+// Character management
+let characterTemplate: any = null; // Store the loaded GLTF for cloning
+let characterInstances: THREE.Object3D[] = [];
+let currentCharacterCount = 1;
 
 const canvas = document.getElementById('c') as HTMLCanvasElement;
 const renderer = new THREE.WebGLRenderer({ 
@@ -169,6 +175,100 @@ function stopAnimation(root: THREE.Object3D, fadeOutDuration: number = 0.3): voi
   state.currentAction = null;
 }
 
+function updateCharacterCount(count: number): void {
+  if (!characterTemplate) {
+    console.warn('Character template not loaded yet');
+    return;
+  }
+  
+  const diff = count - currentCharacterCount;
+  
+  if (diff > 0) {
+    // Add characters
+    for (let i = 0; i < diff; i++) {
+      addCharacter();
+    }
+  } else if (diff < 0) {
+    // Remove characters (but keep at least one)
+    for (let i = 0; i < Math.abs(diff); i++) {
+      removeCharacter();
+    }
+  }
+  
+  currentCharacterCount = count;
+  
+  // Log performance summary
+  console.log(`\n📊 Performance Summary:`);
+  console.log(`  Characters: ${characterInstances.length}`);
+  console.log(`  Expected Draw Calls: ~${characterInstances.length} (1 per character)`);
+  console.log(`  Total Bones: ${characterInstances.length} × 205 = ${characterInstances.length * 205}`);
+  console.log(`  Animation Mixers: ${animationStates.size}`);
+}
+
+function addCharacter(): void {
+  if (!characterTemplate) return;
+  
+  // Clone the scene
+  const newChar = SkeletonUtils.clone(characterTemplate.scene);
+  
+  // Enable shadows on cloned character
+  newChar.traverse((obj: THREE.Object3D) => {
+    if (obj instanceof THREE.Mesh) {
+      obj.castShadow = true;
+      obj.receiveShadow = true;
+    }
+  });
+  
+  // Position character 0.5m in front of the last character
+  const positionZ = characterInstances.length * 0.5;
+  newChar.position.set(0, 0, -positionZ);
+  
+  scene.add(newChar);
+  characterInstances.push(newChar);
+  
+  // Setup animation for this character
+  if (characterTemplate.animations && characterTemplate.animations.length > 0) {
+    setupAnimationMixer(newChar, characterTemplate.animations);
+    playAnimation(newChar, characterTemplate.animations[0].name, true, 0);
+  }
+  
+  console.log(`✓ Added character #${characterInstances.length} at z=${-positionZ}`);
+}
+
+function removeCharacter(): void {
+  if (characterInstances.length <= 1) {
+    console.warn('⚠️ Cannot remove last character');
+    return;
+  }
+  
+  const char = characterInstances.pop();
+  if (char) {
+    // Clean up animation state
+    const state = animationStates.get(char);
+    if (state) {
+      state.mixer.stopAllAction();
+      animationStates.delete(char);
+    }
+    
+    // Remove from scene
+    scene.remove(char);
+    
+    // Dispose of resources
+    char.traverse((obj: THREE.Object3D) => {
+      if (obj instanceof THREE.Mesh) {
+        obj.geometry.dispose();
+        if (Array.isArray(obj.material)) {
+          obj.material.forEach(mat => mat.dispose());
+        } else {
+          obj.material.dispose();
+        }
+      }
+    });
+    
+    console.log(`✓ Removed character, ${characterInstances.length} remaining`);
+  }
+}
+
 function toggleSkeleton(visible: boolean): void {
   if (!currentCharacterRoot) {
     console.warn('No character loaded');
@@ -289,6 +389,58 @@ function createUI(clips: THREE.AnimationClip[]): void {
   label.textContent = 'Show Skeleton';
   skeletonToggle.appendChild(label);
   panel.appendChild(skeletonToggle);
+  
+  // Character count control
+  const charControl = document.createElement('div');
+  charControl.style.cssText = `
+    margin-bottom: 12px;
+    padding: 8px;
+    background: rgba(50, 100, 50, 0.3);
+    border-radius: 4px;
+    border: 1px solid rgba(100, 200, 100, 0.3);
+  `;
+  
+  const charLabel = document.createElement('label');
+  charLabel.style.cssText = `
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  `;
+  
+  const charText = document.createElement('span');
+  charText.textContent = `Characters: ${currentCharacterCount}`;
+  charText.style.fontSize = '11px';
+  charText.style.opacity = '0.8';
+  
+  const drawCallsText = document.createElement('span');
+  drawCallsText.id = 'drawCallsText';
+  drawCallsText.textContent = `Draw Calls: -`;
+  drawCallsText.style.fontSize = '10px';
+  drawCallsText.style.opacity = '0.6';
+  drawCallsText.style.marginTop = '2px';
+  
+  const charSlider = document.createElement('input');
+  charSlider.type = 'range';
+  charSlider.min = '1';
+  charSlider.max = '20';
+  charSlider.value = currentCharacterCount.toString();
+  charSlider.step = '1';
+  charSlider.style.cssText = `
+    width: 100%;
+    cursor: pointer;
+  `;
+  
+  charSlider.oninput = (e) => {
+    const count = parseInt((e.target as HTMLInputElement).value);
+    charText.textContent = `Characters: ${count}`;
+    updateCharacterCount(count);
+  };
+  
+  charLabel.appendChild(charText);
+  charLabel.appendChild(drawCallsText);
+  charLabel.appendChild(charSlider);
+  charControl.appendChild(charLabel);
+  panel.appendChild(charControl);
   
   // FPS limiter control
   const fpsControl = document.createElement('div');
@@ -478,6 +630,9 @@ async function loadAll(): Promise<void> {
   console.log('Loading character...');
   const char = await gltf.loadAsync('/models/CHAR_MrProBonobo.glb');
   
+  // Store as template for cloning
+  characterTemplate = char;
+  
   // Enable shadows on character
   char.scene.traverse((obj: THREE.Object3D) => {
     if (obj instanceof THREE.Mesh) {
@@ -490,6 +645,7 @@ async function loadAll(): Promise<void> {
   
   scene.add(char.scene);
   currentCharacterRoot = char.scene;
+  characterInstances.push(char.scene);
   
   // Debug: Inspect character structure
   console.log('🔍 Character structure analysis:');
@@ -501,6 +657,30 @@ async function loadAll(): Promise<void> {
       skinnedMeshCount++;
       hasSkeleton = true;
       console.log('  ✓ SkinnedMesh found:', obj.name, 'bones:', obj.skeleton?.bones.length);
+      console.log('    - boneTexture:', !!obj.skeleton.boneTexture);
+      console.log('    - vertices:', obj.geometry.attributes.position.count);
+      
+      // Check if all bones are weighted
+      if (obj.geometry.attributes.skinWeight && obj.geometry.attributes.skinIndex) {
+        const skinWeights = obj.geometry.attributes.skinWeight.array;
+        const skinIndices = obj.geometry.attributes.skinIndex.array;
+        const influencesPerVertex = 4; // Standard in Three.js
+        let weightedVertices = 0;
+        
+        for (let i = 0; i < obj.geometry.attributes.position.count; i++) {
+          let hasWeight = false;
+          for (let j = 0; j < influencesPerVertex; j++) {
+            const weightIdx = i * influencesPerVertex + j;
+            if (skinWeights[weightIdx] > 0) {
+              hasWeight = true;
+              break;
+            }
+          }
+          if (hasWeight) weightedVertices++;
+        }
+        
+        console.log(`    - weighted vertices: ${weightedVertices}/${obj.geometry.attributes.position.count} (${(weightedVertices/obj.geometry.attributes.position.count*100).toFixed(1)}%)`);
+      }
     } else if (obj instanceof THREE.Mesh) {
       meshCount++;
       console.log('  - Regular Mesh:', obj.name);
@@ -510,6 +690,22 @@ async function loadAll(): Promise<void> {
   });
   console.log(`  Summary: ${skinnedMeshCount} skinned meshes, ${meshCount} regular meshes`);
   console.log(`  Has skeleton: ${hasSkeleton}`);
+  
+  // Check bone texture usage and provide recommendations
+  char.scene.traverse((obj: THREE.Object3D) => {
+    if (obj instanceof THREE.SkinnedMesh) {
+      const boneCount = obj.skeleton.bones.length;
+      const usesBoneTexture = !!obj.skeleton.boneTexture;
+      
+      if (!usesBoneTexture && boneCount > 150) {
+        console.warn(`⚠️ Bone texture not enabled (${boneCount} bones with uniforms)`);
+        console.log(`   This is OK for 1-2 characters, but may impact performance with 7+ characters.`);
+        console.log(`   To enable bone textures, add ~50 dummy bones to reach 256+ total.`);
+      } else if (usesBoneTexture) {
+        console.log(`✅ Bone texture enabled! Can handle ${boneCount}+ bones efficiently.`);
+      }
+    }
+  });
   
   if (!hasSkeleton && meshCount > 0) {
     console.error('❌ PROBLEM FOUND: Character has meshes but NO SKINNING DATA!');
@@ -546,28 +742,18 @@ async function loadAll(): Promise<void> {
     console.warn('Could not load separate animation GLB:', err);
   }
   
+  // Store animations in template for cloning
+  characterTemplate.animations = allClips;
+  
   // Setup animation mixer if we have clips
   if (allClips.length > 0) {
     // Use the character scene as the mixer root
     const animState = setupAnimationMixer(char.scene, allClips);
     
-    // Try to play the "Test_Baked" animation
-    const testAction = playAnimation(char.scene, 'Test_Baked', true);
-    
-    if (!testAction) {
-      // If Test_Baked not found, try common naming variations
-      const variations = ['test_baked', 'TestBaked', 'Test Baked', 'Test-Baked', 'Test'];
-      let foundAction = null;
-      
-      for (const name of variations) {
-        foundAction = playAnimation(char.scene, name, true);
-        if (foundAction) break;
-      }
-      
-      if (!foundAction && allClips.length > 0) {
-        console.warn('⚠️ "Test_Baked" not found. Playing first animation.');
-        playAnimation(char.scene, allClips[0].name, true);
-      }
+    // Auto-play the first animation
+    if (allClips.length > 0) {
+      playAnimation(char.scene, allClips[0].name, true);
+      console.log(`✓ Auto-playing first animation: "${allClips[0].name}"`);
     }
   } else {
     console.warn('⚠️ No animations found for character');
@@ -641,12 +827,50 @@ document.addEventListener('visibilitychange', () => {
     }
     console.warn('No character or animations found');
     return [];
+  },
+  // Bone diagnostics helper
+  boneInfo: () => {
+    const char = (window as any).animDebug.getCharacter();
+    if (!char) {
+      console.warn('No character found');
+      return null;
+    }
+    
+    const info: any = {
+      skinnedMeshes: [],
+      totalBones: 0,
+      usesBoneTexture: false
+    };
+    
+    char.traverse((obj: THREE.Object3D) => {
+      if (obj instanceof THREE.SkinnedMesh) {
+        const meshInfo = {
+          name: obj.name,
+          boneCount: obj.skeleton.bones.length,
+          boneTexture: !!obj.skeleton.boneTexture,
+          boneTextureSize: obj.skeleton.boneTexture ? `${obj.skeleton.boneTexture.image.width}x${obj.skeleton.boneTexture.image.height}` : 'N/A',
+          vertices: obj.geometry.attributes.position.count
+        };
+        info.skinnedMeshes.push(meshInfo);
+        info.totalBones = Math.max(info.totalBones, obj.skeleton.bones.length);
+        info.usesBoneTexture = info.usesBoneTexture || !!obj.skeleton.boneTexture;
+      }
+    });
+    
+    console.log('🦴 Bone System Analysis:');
+    console.log(`  Uses Bone Texture: ${info.usesBoneTexture ? '✅ YES' : '❌ NO (using uniforms)'}`);
+    console.log(`  Total Bones: ${info.totalBones}`);
+    console.log(`  Skinned Meshes: ${info.skinnedMeshes.length}`);
+    console.table(info.skinnedMeshes);
+    
+    return info;
   }
 };
 
 console.log('💡 Animation debug helpers available via window.animDebug');
 console.log('   - animDebug.play("ClipName") - play an animation');
 console.log('   - animDebug.list() - list all animations');
+console.log('   - animDebug.boneInfo() - show bone/skinning diagnostics');
 
 function tick(currentTime: number = 0): void {
   requestAnimationFrame(tick);
@@ -671,7 +895,18 @@ function tick(currentTime: number = 0): void {
   });
   
   controls.update();
+  
+  // Track draw calls before rendering
+  renderer.info.reset();
   renderer.render(scene, camera);
+  
+  // Update draw calls display (only every 30 frames to reduce overhead)
+  if (Math.floor(currentTime / 500) !== Math.floor(lastFrameTime / 500)) {
+    const drawCallsEl = document.getElementById('drawCallsText');
+    if (drawCallsEl) {
+      drawCallsEl.textContent = `Draw Calls: ${renderer.info.render.calls} | Tris: ${(renderer.info.render.triangles / 1000).toFixed(1)}k`;
+    }
+  }
   
   stats.end();
 }
