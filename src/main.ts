@@ -16,11 +16,16 @@ import Stats from 'stats.js';
  * - Supports multiple clips with smooth crossfading
  * - Debug helpers to list available animations
  * - Automatic fallback if specified clip not found
+ * - Validates that animations contain bone transforms (not just morph targets)
  * 
  * Usage:
  * - playAnimation(characterRoot, 'AnimationName', loop = true, crossfadeDuration = 0.3)
  * - stopAnimation(characterRoot, fadeOutDuration = 0.3)
  * - debugListClips(clips) - logs all available animations
+ * 
+ * Common Issues:
+ * - If character stays in T-pose: Animation GLB may only contain shape key/morph target data
+ *   Fix: In Blender, ensure bone keyframes exist and "Bake Animation" is enabled in GLB export
  */
 
 interface AnimationState {
@@ -31,13 +36,9 @@ interface AnimationState {
 
 const animationStates = new Map<THREE.Object3D, AnimationState>();
 
-// Stats panel
+// Stats panel - will be integrated into debug panel
 const stats = new Stats();
 stats.showPanel(0); // 0: fps, 1: ms, 2: mb
-stats.dom.style.position = 'absolute';
-stats.dom.style.top = '10px';
-stats.dom.style.left = '10px';
-document.body.appendChild(stats.dom);
 
 // Debug helpers
 let skeletonHelper: THREE.SkeletonHelper | null = null;
@@ -46,9 +47,7 @@ let currentCharacterRoot: THREE.Object3D | null = null;
 // Character management
 let characterTemplate: any = null; // Store the loaded GLTF for cloning
 let characterInstances: THREE.Object3D[] = [];
-let currentCharacterCount = 1;
 let environmentScene: THREE.Group | null = null;
-let debugLight: THREE.DirectionalLight | null = null;
 let environmentMaterialsBackup: Map<THREE.Mesh, THREE.Material | THREE.Material[]> = new Map();
 
 const canvas = document.getElementById('c') as HTMLCanvasElement;
@@ -96,17 +95,41 @@ gltf.setMeshoptDecoder(MeshoptDecoder as any);
 
 // Animation helper functions
 function debugListClips(clips: THREE.AnimationClip[]): void {
-  console.log('🎬 Available animation clips:', clips.length);
+  console.log('\n🎬 Available animation clips:', clips.length);
   clips.forEach((clip, idx) => {
-    console.log(`  [${idx}] "${clip.name}" - duration: ${clip.duration.toFixed(2)}s, tracks: ${clip.tracks.length}`);
-    // Log track details for debugging
-    const trackTypes = clip.tracks.reduce((acc, track) => {
-      const type = track.constructor.name;
-      acc[type] = (acc[type] || 0) + 1;
-      return acc;
-    }, {} as Record<string, number>);
-    console.log(`    Track types:`, trackTypes);
+    console.log(`\n  [${idx}] "${clip.name}"`);
+    console.log(`      Duration: ${clip.duration.toFixed(2)}s`);
+    console.log(`      Total Tracks: ${clip.tracks.length}`);
+    
+    // Categorize tracks
+    const trackTypes = {
+      position: 0,
+      quaternion: 0,
+      scale: 0,
+      morphTarget: 0,
+      other: 0
+    };
+    
+    clip.tracks.forEach(track => {
+      if (track.name.includes('.position')) trackTypes.position++;
+      else if (track.name.includes('.quaternion')) trackTypes.quaternion++;
+      else if (track.name.includes('.scale')) trackTypes.scale++;
+      else if (track.name.includes('morphTarget')) trackTypes.morphTarget++;
+      else trackTypes.other++;
+    });
+    
+    console.log(`      Track breakdown:`);
+    console.log(`        - Position: ${trackTypes.position}`);
+    console.log(`        - Quaternion: ${trackTypes.quaternion}`);
+    console.log(`        - Scale: ${trackTypes.scale}`);
+    console.log(`        - Morph Targets: ${trackTypes.morphTarget}`);
+    console.log(`        - Other: ${trackTypes.other}`);
+    
+    if (clip.tracks.length > 0 && clip.tracks.length <= 5) {
+      console.log(`      All track names:`, clip.tracks.map(t => t.name));
+    }
   });
+  console.log('');
 }
 
 function setupAnimationMixer(
@@ -178,114 +201,6 @@ function stopAnimation(root: THREE.Object3D, fadeOutDuration: number = 0.3): voi
   state.currentAction = null;
 }
 
-function updateCharacterCount(count: number): void {
-  if (!characterTemplate) {
-    console.warn('Character template not loaded yet');
-    return;
-  }
-  
-  const diff = count - currentCharacterCount;
-  
-  if (diff > 0) {
-    // Add characters
-    for (let i = 0; i < diff; i++) {
-      addCharacter();
-    }
-  } else if (diff < 0) {
-    // Remove characters (but keep at least one)
-    for (let i = 0; i < Math.abs(diff); i++) {
-      removeCharacter();
-    }
-  }
-  
-  currentCharacterCount = count;
-  
-  // Log performance summary
-  console.log(`\n📊 Performance Summary:`);
-  console.log(`  Characters: ${characterInstances.length}`);
-  console.log(`  Expected Draw Calls: ~${characterInstances.length} (1 per character)`);
-  console.log(`  Total Bones: ${characterInstances.length} × 205 = ${characterInstances.length * 205}`);
-  console.log(`  Animation Mixers: ${animationStates.size}`);
-}
-
-function addCharacter(): void {
-  if (!characterTemplate) return;
-  
-  // Clone the scene
-  const newChar = SkeletonUtils.clone(characterTemplate.scene);
-  
-  // Enable shadows on cloned character
-  newChar.traverse((obj: THREE.Object3D) => {
-    if (obj instanceof THREE.Mesh) {
-      obj.castShadow = true;
-      obj.receiveShadow = true;
-    }
-  });
-  
-  // Position characters in a row along X axis (side by side)
-  const positionX = (characterInstances.length - 10) * 0.8; // Center around origin
-  newChar.position.set(positionX, 0, 0);
-  
-  scene.add(newChar);
-  characterInstances.push(newChar);
-  
-  // Setup animation for this character
-  if (characterTemplate.animations && characterTemplate.animations.length > 0) {
-    setupAnimationMixer(newChar, characterTemplate.animations);
-    playAnimation(newChar, characterTemplate.animations[0].name, true, 0);
-  }
-  
-  console.log(`✓ Added character #${characterInstances.length} at x=${positionX}`);
-}
-
-function removeCharacter(): void {
-  if (characterInstances.length <= 1) {
-    console.warn('⚠️ Cannot remove last character');
-    return;
-  }
-  
-  const char = characterInstances.pop();
-  if (char) {
-    // Clean up animation state
-    const state = animationStates.get(char);
-    if (state) {
-      state.mixer.stopAllAction();
-      animationStates.delete(char);
-    }
-    
-    // Remove from scene
-    scene.remove(char);
-    
-    // Dispose of resources
-    char.traverse((obj: THREE.Object3D) => {
-      if (obj instanceof THREE.Mesh) {
-        obj.geometry.dispose();
-        if (Array.isArray(obj.material)) {
-          obj.material.forEach(mat => mat.dispose());
-        } else {
-          obj.material.dispose();
-        }
-      }
-    });
-    
-    console.log(`✓ Removed character, ${characterInstances.length} remaining`);
-  }
-}
-
-function toggleDebugLight(enabled: boolean): void {
-  if (enabled && !debugLight) {
-    // Create a simple directional light
-    debugLight = new THREE.DirectionalLight(0xffffff, 2);
-    debugLight.position.set(5, 10, 5);
-    debugLight.castShadow = false; // Don't cast shadows for performance
-    scene.add(debugLight);
-    console.log('✓ Debug light added');
-  } else if (!enabled && debugLight) {
-    scene.remove(debugLight);
-    debugLight = null;
-    console.log('✓ Debug light removed');
-  }
-}
 
 function applyGrayMaterialToEnvironment(): void {
   if (!environmentScene) {
@@ -398,138 +313,91 @@ function toggleSkeleton(visible: boolean): void {
   }
 }
 
-function getObjectDepth(obj: THREE.Object3D): number {
-  let depth = 0;
-  let current = obj;
-  while (current.parent && current.parent !== scene) {
-    depth++;
-    current = current.parent;
-  }
-  return depth;
-}
 
 function createUI(clips: THREE.AnimationClip[]): void {
   const panel = document.createElement('div');
   panel.style.cssText = `
     position: absolute;
-    top: 80px;
+    top: 10px;
     left: 10px;
     background: rgba(0, 0, 0, 0.8);
     color: white;
-    padding: 15px;
+    padding: 0;
     border-radius: 8px;
     font-family: monospace;
     font-size: 12px;
-    min-width: 200px;
+    min-width: 250px;
     max-width: 300px;
+    overflow: hidden;
   `;
   
-  const title = document.createElement('div');
-  title.textContent = '🎬 Animation Controls';
-  title.style.cssText = `
+  // Header with toggle
+  const header = document.createElement('div');
+  header.style.cssText = `
     font-weight: bold;
-    margin-bottom: 10px;
     font-size: 14px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.3);
-    padding-bottom: 5px;
-  `;
-  panel.appendChild(title);
-  
-  // Skeleton toggle
-  const skeletonToggle = document.createElement('label');
-  skeletonToggle.style.cssText = `
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 8px;
+    padding: 12px 15px;
     cursor: pointer;
-  `;
-  const checkbox = document.createElement('input');
-  checkbox.type = 'checkbox';
-  checkbox.onchange = (e) => toggleSkeleton((e.target as HTMLInputElement).checked);
-  checkbox.style.cursor = 'pointer';
-  skeletonToggle.appendChild(checkbox);
-  const label = document.createElement('span');
-  label.textContent = 'Show Skeleton';
-  skeletonToggle.appendChild(label);
-  panel.appendChild(skeletonToggle);
-  
-  // Environment toggle
-  const envToggle = document.createElement('label');
-  envToggle.style.cssText = `
+    user-select: none;
     display: flex;
+    justify-content: space-between;
     align-items: center;
-    gap: 8px;
-    margin-bottom: 12px;
-    cursor: pointer;
+    background: rgba(255, 255, 255, 0.05);
   `;
-  const envCheckbox = document.createElement('input');
-  envCheckbox.type = 'checkbox';
-  envCheckbox.checked = true;
-  envCheckbox.onchange = (e) => {
-    if (environmentScene) {
-      environmentScene.visible = (e.target as HTMLInputElement).checked;
-      console.log(`Environment: ${environmentScene.visible ? 'visible' : 'hidden'}`);
-    }
+  
+  const title = document.createElement('span');
+  title.textContent = '⚙️ Debug Controls';
+  
+  const toggleIcon = document.createElement('span');
+  toggleIcon.textContent = '▼';
+  toggleIcon.style.cssText = `
+    font-size: 10px;
+    transition: transform 0.2s;
+    transform: rotate(-90deg);
+  `;
+  
+  header.appendChild(title);
+  header.appendChild(toggleIcon);
+  panel.appendChild(header);
+  
+  // Content container
+  const content = document.createElement('div');
+  content.style.cssText = `
+    display: none;
+    padding: 15px;
+  `;
+  panel.appendChild(content);
+  
+  // Toggle functionality
+  let isExpanded = false;
+  header.onclick = () => {
+    isExpanded = !isExpanded;
+    content.style.display = isExpanded ? 'block' : 'none';
+    toggleIcon.style.transform = isExpanded ? 'rotate(0deg)' : 'rotate(-90deg)';
   };
-  envCheckbox.style.cursor = 'pointer';
-  envToggle.appendChild(envCheckbox);
-  const envLabel = document.createElement('span');
-  envLabel.textContent = 'Show Environment';
-  envToggle.appendChild(envLabel);
-  panel.appendChild(envToggle);
   
-  // Character count control
-  const charControl = document.createElement('div');
-  charControl.style.cssText = `
+  // FPS counter display (integrated stats.js) - full width
+  const fpsDisplay = document.createElement('div');
+  fpsDisplay.style.cssText = `
     margin-bottom: 12px;
-    padding: 8px;
-    background: rgba(50, 100, 50, 0.3);
+    background: rgba(0, 100, 200, 0.2);
     border-radius: 4px;
-    border: 1px solid rgba(100, 200, 100, 0.3);
-  `;
-  
-  const charLabel = document.createElement('label');
-  charLabel.style.cssText = `
+    border: 1px solid rgba(0, 150, 255, 0.3);
+    padding: 4px;
+    height: 56px;
+    box-sizing: border-box;
     display: flex;
-    flex-direction: column;
-    gap: 5px;
+    align-items: center;
+    justify-content: center;
   `;
   
-  const charText = document.createElement('span');
-  charText.textContent = `Characters: ${currentCharacterCount}`;
-  charText.style.fontSize = '11px';
-  charText.style.opacity = '0.8';
+  // Configure stats.js to render at a specific size
+  stats.dom.style.position = 'relative';
+  stats.dom.style.width = '100%';
+  stats.dom.style.height = '48px';
   
-  const drawCallsText = document.createElement('span');
-  drawCallsText.id = 'drawCallsText';
-  drawCallsText.textContent = `Draw Calls: -`;
-  drawCallsText.style.fontSize = '10px';
-  drawCallsText.style.opacity = '0.6';
-  drawCallsText.style.marginTop = '2px';
-  
-  const charSlider = document.createElement('input');
-  charSlider.type = 'range';
-  charSlider.min = '1';
-  charSlider.max = '20';
-  charSlider.value = currentCharacterCount.toString();
-  charSlider.step = '1';
-  charSlider.style.cssText = `
-    width: 100%;
-    cursor: pointer;
-  `;
-  
-  charSlider.oninput = (e) => {
-    const count = parseInt((e.target as HTMLInputElement).value);
-    charText.textContent = `Characters: ${count}`;
-    updateCharacterCount(count);
-  };
-  
-  charLabel.appendChild(charText);
-  charLabel.appendChild(drawCallsText);
-  charLabel.appendChild(charSlider);
-  charControl.appendChild(charLabel);
-  panel.appendChild(charControl);
+  fpsDisplay.appendChild(stats.dom);
+  content.appendChild(fpsDisplay);
   
   // FPS limiter control
   const fpsControl = document.createElement('div');
@@ -572,79 +440,71 @@ function createUI(clips: THREE.AnimationClip[]): void {
   fpsLabel.appendChild(fpsText);
   fpsLabel.appendChild(fpsSlider);
   fpsControl.appendChild(fpsLabel);
-  panel.appendChild(fpsControl);
+  content.appendChild(fpsControl);
   
-  // Debug button
-  const debugBtn = document.createElement('button');
-  debugBtn.textContent = 'Log Scene Hierarchy';
-  debugBtn.style.cssText = `
-    width: 100%;
-    padding: 6px;
-    margin-bottom: 6px;
-    background: rgba(100, 100, 200, 0.2);
-    color: white;
-    border: 1px solid rgba(100, 100, 200, 0.4);
-    border-radius: 4px;
+  // Environment toggle
+  const envToggle = document.createElement('label');
+  envToggle.style.cssText = `
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
     cursor: pointer;
-    font-family: monospace;
-    font-size: 10px;
   `;
-  debugBtn.onclick = () => {
-    if (currentCharacterRoot) {
-      console.log('🌳 Character Scene Hierarchy:');
-      currentCharacterRoot.traverse((obj: THREE.Object3D) => {
-        const depth = getObjectDepth(obj);
-        const prefix = '  '.repeat(depth);
-        const type = obj.type || obj.constructor.name;
-        console.log(`${prefix}${type}: "${obj.name}"`);
-      });
+  const envCheckbox = document.createElement('input');
+  envCheckbox.type = 'checkbox';
+  envCheckbox.checked = true;
+  envCheckbox.onchange = (e) => {
+    if (environmentScene) {
+      environmentScene.visible = (e.target as HTMLInputElement).checked;
     }
   };
-  panel.appendChild(debugBtn);
+  envCheckbox.style.cursor = 'pointer';
+  envToggle.appendChild(envCheckbox);
+  const envLabel = document.createElement('span');
+  envLabel.textContent = 'Show Environment';
+  envToggle.appendChild(envLabel);
+  content.appendChild(envToggle);
   
-  // Debug light button
-  const lightBtn = document.createElement('button');
-  lightBtn.textContent = '💡 Toggle Debug Light';
-  lightBtn.style.cssText = `
-    width: 100%;
-    padding: 6px;
-    margin-bottom: 6px;
-    background: rgba(200, 200, 100, 0.2);
-    color: white;
-    border: 1px solid rgba(200, 200, 100, 0.4);
-    border-radius: 4px;
+  // Skeleton toggle
+  const skeletonToggle = document.createElement('label');
+  skeletonToggle.style.cssText = `
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
     cursor: pointer;
-    font-family: monospace;
-    font-size: 10px;
   `;
-  let lightEnabled = false;
-  lightBtn.onclick = () => {
-    lightEnabled = !lightEnabled;
-    toggleDebugLight(lightEnabled);
-    lightBtn.style.background = lightEnabled ? 'rgba(200, 200, 100, 0.4)' : 'rgba(200, 200, 100, 0.2)';
-  };
-  panel.appendChild(lightBtn);
+  const checkbox = document.createElement('input');
+  checkbox.type = 'checkbox';
+  checkbox.onchange = (e) => toggleSkeleton((e.target as HTMLInputElement).checked);
+  checkbox.style.cursor = 'pointer';
+  skeletonToggle.appendChild(checkbox);
+  const label = document.createElement('span');
+  label.textContent = 'Show Skeleton';
+  skeletonToggle.appendChild(label);
+  content.appendChild(skeletonToggle);
   
   // Gray material button
   const grayBtn = document.createElement('button');
   grayBtn.textContent = '🎨 Gray Environment Material';
   grayBtn.style.cssText = `
     width: 100%;
-    padding: 6px;
-    margin-bottom: 12px;
+    padding: 8px;
+    margin-top: 4px;
     background: rgba(150, 150, 150, 0.2);
     color: white;
     border: 1px solid rgba(150, 150, 150, 0.4);
     border-radius: 4px;
     cursor: pointer;
     font-family: monospace;
-    font-size: 10px;
+    font-size: 11px;
   `;
   let grayApplied = false;
   grayBtn.onclick = () => {
     if (!grayApplied) {
       applyGrayMaterialToEnvironment();
-      grayBtn.textContent = '🎨 Restore Original Materials';
+      grayBtn.textContent = '🎨 Restore Materials';
       grayBtn.style.background = 'rgba(150, 150, 150, 0.4)';
       grayApplied = true;
     } else {
@@ -654,130 +514,50 @@ function createUI(clips: THREE.AnimationClip[]): void {
       grayApplied = false;
     }
   };
-  panel.appendChild(grayBtn);
+  content.appendChild(grayBtn);
   
-  // Performance profiler button
-  const perfBtn = document.createElement('button');
-  perfBtn.textContent = 'Log Performance Report';
-  perfBtn.style.cssText = `
-    width: 100%;
-    padding: 6px;
-    margin-bottom: 12px;
-    background: rgba(200, 100, 100, 0.2);
-    color: white;
-    border: 1px solid rgba(200, 100, 100, 0.4);
-    border-radius: 4px;
-    cursor: pointer;
-    font-family: monospace;
-    font-size: 10px;
-  `;
-  perfBtn.onclick = () => {
-    console.log('\n🔍 PERFORMANCE REPORT');
-    console.log('═══════════════════════════════════════');
-    
-    // Renderer info
-    console.log('\n📊 Renderer Info:');
-    console.log(`  Draw Calls: ${renderer.info.render.calls}`);
-    console.log(`  Triangles: ${renderer.info.render.triangles.toLocaleString()}`);
-    console.log(`  Points: ${renderer.info.render.points}`);
-    console.log(`  Lines: ${renderer.info.render.lines}`);
-    console.log(`  Geometries: ${renderer.info.memory.geometries}`);
-    console.log(`  Textures: ${renderer.info.memory.textures}`);
-    
-    // Renderer settings
-    console.log('\n⚙️ Renderer Settings:');
-    console.log(`  Pixel Ratio: ${renderer.getPixelRatio()}`);
-    console.log(`  Canvas Size: ${renderer.domElement.width}×${renderer.domElement.height}`);
-    console.log(`  Shadows Enabled: ${renderer.shadowMap.enabled}`);
-    console.log(`  Shadow Map Type: ${renderer.shadowMap.type}`);
-    console.log(`  Max Texture Size: ${renderer.capabilities.maxTextureSize}`);
-    
-    // Character info
-    console.log('\n👥 Characters:');
-    console.log(`  Count: ${characterInstances.length}`);
-    console.log(`  Animation Mixers: ${animationStates.size}`);
-    
-    let totalSkinnedMeshes = 0;
-    let totalBones = 0;
-    let totalVertices = 0;
-    
-    characterInstances.forEach((char, idx) => {
-      char.traverse((obj: THREE.Object3D) => {
-        if (obj instanceof THREE.SkinnedMesh) {
-          totalSkinnedMeshes++;
-          totalBones += obj.skeleton.bones.length;
-          totalVertices += obj.geometry.attributes.position.count;
-        }
-      });
-    });
-    
-    console.log(`  Total Skinned Meshes: ${totalSkinnedMeshes}`);
-    console.log(`  Total Bones: ${totalBones.toLocaleString()}`);
-    console.log(`  Total Vertices: ${totalVertices.toLocaleString()}`);
-    
-    // Scene complexity
-    console.log('\n🌍 Scene Complexity:');
-    let meshCount = 0;
-    let lightCount = 0;
-    let envMeshCount = 0;
-    
-    scene.traverse((obj: THREE.Object3D) => {
-      if (obj instanceof THREE.Mesh) meshCount++;
-      if (obj instanceof THREE.Light) lightCount++;
-    });
-    
-    if (environmentScene) {
-      environmentScene.traverse((obj: THREE.Object3D) => {
-        if (obj instanceof THREE.Mesh) envMeshCount++;
-      });
-    }
-    
-    console.log(`  Total Meshes: ${meshCount}`);
-    console.log(`  Environment Meshes: ${envMeshCount} (${((envMeshCount/meshCount)*100).toFixed(1)}% of total!)`);
-    console.log(`  Character Meshes: ${meshCount - envMeshCount}`);
-    console.log(`  Total Lights: ${lightCount}`);
-    
-    // Check for potential bottlenecks
-    console.log('\n⚠️ Potential Bottlenecks:');
-    if (renderer.info.render.calls > 100) {
-      console.log(`  • TOO MANY DRAW CALLS (${renderer.info.render.calls})! Environment is killing performance.`);
-      console.log(`    Toggle off environment to test character-only performance.`);
-    }
-    if (envMeshCount > 50) {
-      console.log(`  • Environment has ${envMeshCount} meshes - should be merged/optimized`);
-    }
-    if (renderer.getPixelRatio() > 2) {
-      console.log(`  • High pixel ratio (${renderer.getPixelRatio()}) - reduce to 2 max`);
-    }
-    if (renderer.shadowMap.enabled) {
-      console.log(`  • Shadow maps enabled - can be expensive on mobile`);
-    }
-    if (totalVertices > 500000) {
-      console.log(`  • High vertex count (${totalVertices.toLocaleString()}) - consider LOD`);
-    }
-    
-    let usingBoneTextures = false;
-    scene.traverse((o: any) => {
-      if (o.skeleton?.boneTexture) usingBoneTextures = true;
-    });
-    if (!usingBoneTextures && characterInstances.length > 5) {
-      console.log(`  • Bone textures NOT in use - may hit uniform limits with many characters`);
-    }
-    
-    console.log('\n═══════════════════════════════════════\n');
-  };
-  panel.appendChild(perfBtn);
-  
-  // Animation buttons
+  // Animation buttons section
   if (clips.length > 0) {
+    // Check if animations have bone transforms
+    const hasBoneAnimations = clips.some(clip => 
+      clip.tracks.some(track => 
+        track.name.includes('.position') || 
+        track.name.includes('.quaternion') || 
+        track.name.includes('.scale')
+      )
+    );
+    
+    // Warning if no bone animations
+    if (!hasBoneAnimations) {
+      const warningBox = document.createElement('div');
+      warningBox.textContent = '⚠️ Animations missing bone data - check console';
+      warningBox.style.cssText = `
+        margin-top: 15px;
+        margin-bottom: 8px;
+        padding: 8px;
+        background: rgba(200, 50, 50, 0.3);
+        border: 1px solid rgba(255, 100, 100, 0.5);
+        border-radius: 4px;
+        font-size: 10px;
+        color: #ffcccc;
+        text-align: center;
+        cursor: help;
+      `;
+      warningBox.title = 'Animation GLB only contains shape keys/morph targets. Re-export with bone keyframes from Blender.';
+      content.appendChild(warningBox);
+    }
+    
     const animTitle = document.createElement('div');
     animTitle.textContent = 'Animations:';
     animTitle.style.cssText = `
-      margin-top: 10px;
+      margin-top: 15px;
       margin-bottom: 8px;
       opacity: 0.7;
+      font-size: 11px;
+      border-top: 1px solid rgba(255, 255, 255, 0.2);
+      padding-top: 10px;
     `;
-    panel.appendChild(animTitle);
+    content.appendChild(animTitle);
     
     clips.forEach(clip => {
       const btn = document.createElement('button');
@@ -810,20 +590,25 @@ function createUI(clips: THREE.AnimationClip[]): void {
       };
       
       btn.onclick = () => {
+        console.log(`🎬 Button clicked for animation: "${clip.name}"`);
         if (currentCharacterRoot) {
-          playAnimation(currentCharacterRoot, clip.name, true);
+          const result = playAnimation(currentCharacterRoot, clip.name, true);
+          console.log(`Animation play result:`, result ? 'Success' : 'Failed');
+          
           // Update all button states
-          panel.querySelectorAll('button').forEach(b => {
+          content.querySelectorAll('button[data-clip-name]').forEach(b => {
             const isActive = (b as HTMLButtonElement).dataset.clipName === clip.name;
-            b.style.background = isActive ? 'rgba(100, 200, 100, 0.3)' : 'rgba(255, 255, 255, 0.1)';
-            b.style.borderColor = isActive ? 'rgba(100, 200, 100, 0.6)' : 'rgba(255, 255, 255, 0.3)';
+            (b as HTMLElement).style.background = isActive ? 'rgba(100, 200, 100, 0.3)' : 'rgba(255, 255, 255, 0.1)';
+            (b as HTMLElement).style.borderColor = isActive ? 'rgba(100, 200, 100, 0.6)' : 'rgba(255, 255, 255, 0.3)';
           });
+        } else {
+          console.error('No character root found!');
         }
       };
       
-      panel.appendChild(btn);
+      content.appendChild(btn);
       
-      // Highlight first playing animation
+      // Highlight currently playing animation
       const state = currentCharacterRoot && animationStates.get(currentCharacterRoot);
       if (state?.currentAction?.getClip().name === clip.name) {
         btn.style.background = 'rgba(100, 200, 100, 0.3)';
@@ -833,8 +618,12 @@ function createUI(clips: THREE.AnimationClip[]): void {
   } else {
     const noAnims = document.createElement('div');
     noAnims.textContent = 'No animations found';
-    noAnims.style.opacity = '0.5';
-    panel.appendChild(noAnims);
+    noAnims.style.cssText = `
+      margin-top: 10px;
+      opacity: 0.5;
+      font-size: 10px;
+    `;
+    content.appendChild(noAnims);
   }
   
   document.body.appendChild(panel);
@@ -915,72 +704,26 @@ async function loadAll(): Promise<void> {
   let hasSkeleton = false;
   let meshCount = 0;
   let skinnedMeshCount = 0;
+  let totalBones = 0;
+  
   char.scene.traverse((obj: THREE.Object3D) => {
     if (obj instanceof THREE.SkinnedMesh) {
       skinnedMeshCount++;
       hasSkeleton = true;
-      console.log('  ✓ SkinnedMesh found:', obj.name, 'bones:', obj.skeleton?.bones.length);
-      console.log('    - boneTexture:', !!obj.skeleton.boneTexture);
-      console.log('    - vertices:', obj.geometry.attributes.position.count);
-      
-      // Check if all bones are weighted
-      if (obj.geometry.attributes.skinWeight && obj.geometry.attributes.skinIndex) {
-        const skinWeights = obj.geometry.attributes.skinWeight.array;
-        const skinIndices = obj.geometry.attributes.skinIndex.array;
-        const influencesPerVertex = 4; // Standard in Three.js
-        let weightedVertices = 0;
-        
-        for (let i = 0; i < obj.geometry.attributes.position.count; i++) {
-          let hasWeight = false;
-          for (let j = 0; j < influencesPerVertex; j++) {
-            const weightIdx = i * influencesPerVertex + j;
-            if (skinWeights[weightIdx] > 0) {
-              hasWeight = true;
-              break;
-            }
-          }
-          if (hasWeight) weightedVertices++;
-        }
-        
-        console.log(`    - weighted vertices: ${weightedVertices}/${obj.geometry.attributes.position.count} (${(weightedVertices/obj.geometry.attributes.position.count*100).toFixed(1)}%)`);
-      }
+      totalBones = obj.skeleton?.bones.length || 0;
+      console.log('  ✓ SkinnedMesh found:', obj.name);
+      console.log('    - Bones:', totalBones);
+      console.log('    - Vertices:', obj.geometry.attributes.position.count);
+      console.log('    - Bone Texture:', !!obj.skeleton.boneTexture);
     } else if (obj instanceof THREE.Mesh) {
       meshCount++;
-      console.log('  - Regular Mesh:', obj.name);
-    } else if (obj instanceof THREE.Bone) {
-      console.log('  - Bone:', obj.name);
     }
   });
-  console.log(`  Summary: ${skinnedMeshCount} skinned meshes, ${meshCount} regular meshes`);
+  
+  console.log(`  Summary: ${skinnedMeshCount} skinned mesh(es), ${meshCount} regular mesh(es), ${totalBones} bones`);
   console.log(`  Has skeleton: ${hasSkeleton}`);
   
-  // Check bone texture usage and provide recommendations
-  char.scene.traverse((obj: THREE.Object3D) => {
-    if (obj instanceof THREE.SkinnedMesh) {
-      const boneCount = obj.skeleton.bones.length;
-      const usesBoneTexture = !!obj.skeleton.boneTexture;
-      
-      if (!usesBoneTexture && boneCount > 150) {
-        console.warn(`⚠️ Bone texture not enabled (${boneCount} bones with uniforms)`);
-        console.log(`   This is OK for 1-2 characters, but may impact performance with 7+ characters.`);
-        console.log(`   To enable bone textures, add ~50 dummy bones to reach 256+ total.`);
-      } else if (usesBoneTexture) {
-        console.log(`✅ Bone texture enabled! Can handle ${boneCount}+ bones efficiently.`);
-      }
-    }
-  });
   
-  if (!hasSkeleton && meshCount > 0) {
-    console.error('❌ PROBLEM FOUND: Character has meshes but NO SKINNING DATA!');
-    console.error('   The Blender export did not include vertex weights/skinning.');
-    console.error('   Animation will play on bones but mesh will not deform.');
-    console.error('');
-    console.error('   FIX: Re-export from Blender with these settings:');
-    console.error('   1. Make sure mesh has Armature modifier');
-    console.error('   2. Vertex groups must be named after bones');
-    console.error('   3. In GLB export: Enable "Skinning" under Armature section');
-    console.error('   4. Apply modifiers if needed');
-  }
   
   // Load and setup animations
   console.log('Loading character animations...');
@@ -997,12 +740,32 @@ async function loadAll(): Promise<void> {
   try {
     const animGltf = await gltf.loadAsync('/anims/ANIM_RT_MrProBonobo.glb');
     
+    console.log('📦 Animation GLB loaded, analyzing structure...');
+    console.log('  - Has scene:', !!animGltf.scene);
+    console.log('  - Scene children:', animGltf.scene?.children.length || 0);
+    console.log('  - Animations found:', animGltf.animations?.length || 0);
+    
+    // Log the scene hierarchy to see what was exported
+    if (animGltf.scene) {
+      console.log('  - Scene hierarchy:');
+      animGltf.scene.traverse((obj: THREE.Object3D) => {
+        if (obj instanceof THREE.Bone) {
+          console.log(`    └─ Bone: ${obj.name}`);
+          return; // Only log first few bones
+        } else if (obj !== animGltf.scene) {
+          console.log(`    └─ ${obj.type}: ${obj.name}`);
+        }
+      });
+    }
+    
     if (animGltf.animations && animGltf.animations.length > 0) {
       debugListClips(animGltf.animations);
       allClips.push(...animGltf.animations);
+    } else {
+      console.warn('⚠️ Animation GLB loaded but contains NO animations!');
     }
   } catch (err) {
-    console.warn('Could not load separate animation GLB:', err);
+    console.error('❌ Could not load separate animation GLB:', err);
   }
   
   // Store animations in template for cloning
@@ -1010,16 +773,68 @@ async function loadAll(): Promise<void> {
   
   // Setup animation mixer if we have clips
   if (allClips.length > 0) {
+    console.log(`\n🎬 Setting up animations...`);
+    console.log(`Available clips:`, allClips.map(c => c.name));
+    
+    // Check if animations are skeletal or morph targets
+    const hasBoneAnimations = allClips.some(clip => 
+      clip.tracks.some(track => 
+        track.name.includes('.position') || 
+        track.name.includes('.quaternion') || 
+        track.name.includes('.scale')
+      )
+    );
+    
+    if (!hasBoneAnimations) {
+      console.error('\n❌ CRITICAL: Animations contain NO BONE TRANSFORMS!');
+      console.error('   Character has skeleton with 403 bones, but animations only affect morph targets.');
+      console.error('   The character will remain in A/T-pose - bones are not animated.');
+      console.error('');
+      console.error('   🔧 BLENDER EXPORT FIX:');
+      console.error('   1. In Blender, select the Armature (not the mesh)');
+      console.error('   2. Go to Pose Mode (Ctrl+Tab or mode dropdown)');
+      console.error('   3. Check if your animation has keyframes on bones (orange/yellow frames in timeline)');
+      console.error('   4. When exporting GLB:');
+      console.error('      - Animation tab: Enable "Export Deformation Bones Only" or "Export All Bones"');
+      console.error('      - Make sure "Bake Animation" is enabled');
+      console.error('      - If using NLA strips, enable "NLA Strips" or "Export All Actions"');
+      console.error('   5. Re-export and replace the ANIM_RT_MrProBonobo.glb file');
+      console.error('');
+      console.error('   Current animation tracks:', allClips[0].tracks.map(t => t.name).join(', '));
+      console.error('   Expected tracks like: "DEF_SPINE_01.quaternion", "DEF_ARM_01L.position", etc.');
+      console.error('');
+    }
+    
     // Use the character scene as the mixer root
     const animState = setupAnimationMixer(char.scene, allClips);
+    console.log(`✓ Animation mixer created with ${allClips.length} clips`);
     
-    // Auto-play the first animation
-    if (allClips.length > 0) {
-      playAnimation(char.scene, allClips[0].name, true);
-      console.log(`✓ Auto-playing first animation: "${allClips[0].name}"`);
+    // Auto-play the Sitting_Idle animation by default
+    const defaultAnim = 'Sitting_Idle';
+    console.log(`\n🎯 Attempting to play default animation: "${defaultAnim}"`);
+    const action = playAnimation(char.scene, defaultAnim, true);
+    
+    if (action) {
+      console.log(`✅ Successfully started "${defaultAnim}" animation`);
+      console.log(`   - Duration: ${action.getClip().duration}s`);
+      console.log(`   - Loop: ${action.loop === THREE.LoopRepeat}`);
+      console.log(`   - Enabled: ${action.enabled}`);
+      console.log(`   - Paused: ${action.paused}`);
+      console.log(`   - Time: ${action.time}`);
+    } else {
+      // Fallback to first animation if Sitting_Idle not found
+      console.warn(`⚠️ Animation "${defaultAnim}" not found!`);
+      console.log(`Available animations:`, allClips.map(c => c.name).join(', '));
+      console.log(`\n🔄 Falling back to first animation: "${allClips[0].name}"`);
+      const fallbackAction = playAnimation(char.scene, allClips[0].name, true);
+      if (fallbackAction) {
+        console.log(`✅ Fallback animation playing`);
+      } else {
+        console.error(`❌ Failed to play fallback animation!`);
+      }
     }
   } else {
-    console.warn('⚠️ No animations found for character');
+    console.error('❌ No animations found for character!');
   }
   
   // Create UI controls after loading
@@ -1056,84 +871,6 @@ document.addEventListener('visibilitychange', () => {
   }
 });
 
-// Expose animation controls to window for debugging
-(window as any).animDebug = {
-  playAnimation,
-  stopAnimation,
-  debugListClips,
-  getAnimationStates: () => animationStates,
-  // Helper to get character root (assuming only one character for now)
-  getCharacter: () => {
-    const states = Array.from(animationStates.keys());
-    return states.length > 0 ? states[0] : null;
-  },
-  // Quick play helper: window.animDebug.play('ClipName')
-  play: (clipName: string, loop = true) => {
-    const char = (window as any).animDebug.getCharacter();
-    if (char) return playAnimation(char, clipName, loop);
-    console.warn('No character found');
-    return null;
-  },
-  // Quick list helper: window.animDebug.list()
-  list: () => {
-    const char = (window as any).animDebug.getCharacter();
-    if (char) {
-      const state = animationStates.get(char);
-      if (state) {
-        const clips = Array.from(state.actions.keys()).map((name, idx) => {
-          const action = state.actions.get(name)!;
-          return { name, duration: action.getClip().duration };
-        });
-        console.table(clips);
-        return clips;
-      }
-    }
-    console.warn('No character or animations found');
-    return [];
-  },
-  // Bone diagnostics helper
-  boneInfo: () => {
-    const char = (window as any).animDebug.getCharacter();
-    if (!char) {
-      console.warn('No character found');
-      return null;
-    }
-    
-    const info: any = {
-      skinnedMeshes: [],
-      totalBones: 0,
-      usesBoneTexture: false
-    };
-    
-    char.traverse((obj: THREE.Object3D) => {
-      if (obj instanceof THREE.SkinnedMesh) {
-        const meshInfo = {
-          name: obj.name,
-          boneCount: obj.skeleton.bones.length,
-          boneTexture: !!obj.skeleton.boneTexture,
-          boneTextureSize: obj.skeleton.boneTexture ? `${obj.skeleton.boneTexture.image.width}x${obj.skeleton.boneTexture.image.height}` : 'N/A',
-          vertices: obj.geometry.attributes.position.count
-        };
-        info.skinnedMeshes.push(meshInfo);
-        info.totalBones = Math.max(info.totalBones, obj.skeleton.bones.length);
-        info.usesBoneTexture = info.usesBoneTexture || !!obj.skeleton.boneTexture;
-      }
-    });
-    
-    console.log('🦴 Bone System Analysis:');
-    console.log(`  Uses Bone Texture: ${info.usesBoneTexture ? '✅ YES' : '❌ NO (using uniforms)'}`);
-    console.log(`  Total Bones: ${info.totalBones}`);
-    console.log(`  Skinned Meshes: ${info.skinnedMeshes.length}`);
-    console.table(info.skinnedMeshes);
-    
-    return info;
-  }
-};
-
-console.log('💡 Animation debug helpers available via window.animDebug');
-console.log('   - animDebug.play("ClipName") - play an animation');
-console.log('   - animDebug.list() - list all animations');
-console.log('   - animDebug.boneInfo() - show bone/skinning diagnostics');
 
 function tick(currentTime: number = 0): void {
   requestAnimationFrame(tick);
@@ -1153,23 +890,13 @@ function tick(currentTime: number = 0): void {
   const delta = clock.getDelta();
   
   // Update all animation mixers
-  animationStates.forEach(state => {
+  animationStates.forEach((state, root) => {
     state.mixer.update(delta);
   });
   
   controls.update();
   
-  // Track draw calls before rendering
-  renderer.info.reset();
   renderer.render(scene, camera);
-  
-  // Update draw calls display (only every 30 frames to reduce overhead)
-  if (Math.floor(currentTime / 500) !== Math.floor(lastFrameTime / 500)) {
-    const drawCallsEl = document.getElementById('drawCallsText');
-    if (drawCallsEl) {
-      drawCallsEl.textContent = `Draw Calls: ${renderer.info.render.calls} | Tris: ${(renderer.info.render.triangles / 1000).toFixed(1)}k | Geom: ${renderer.info.memory.geometries} | Tex: ${renderer.info.memory.textures}`;
-    }
-  }
   
   stats.end();
 }
