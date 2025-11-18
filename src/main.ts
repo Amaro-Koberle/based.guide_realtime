@@ -74,8 +74,7 @@ scene.background = new THREE.Color(0x111111); // Will be updated when skydome lo
 const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 2000);
 camera.position.set(4, 3, 6);
 
-// Mouse-follow camera system (replaces OrbitControls)
-// Camera stays at fixed position but rotates to follow cursor
+// Adaptive camera system (mouse on desktop, gyro on mobile)
 let mouseX = 0;
 let mouseY = 0;
 const mouseSensitivity = 1.0; // Max offset distance in world units
@@ -93,25 +92,89 @@ let zoomProgress = 0;
 const zoomSpeed = 0.05; // How fast to zoom in/out (much slower, was 0.15)
 const zoomAmount = 0.3; // How much to zoom (0.3 = 30% closer, reduced by 50%)
 
-// Track mouse movement
-window.addEventListener('mousemove', (event) => {
-  // Normalize mouse position to -1 to 1 range
-  mouseX = (event.clientX / window.innerWidth) * 2 - 1;
-  mouseY = -(event.clientY / window.innerHeight) * 2 + 1; // Invert Y axis
-});
+// Gyroscope system for mobile
+let useGyro = false;
+let gyroAlpha = 0;  // Z-axis (compass)
+let gyroBeta = 0;   // X-axis (front-back tilt)
+let gyroGamma = 0;  // Y-axis (left-right tilt)
+let gyroCalibrationBeta = 0;  // Store calibration offset
+let gyroCalibrationGamma = 0;
 
-// Track mouse clicks for zoom
-canvas.addEventListener('mousedown', () => {
-  isZooming = true;
-});
+// Detect mobile device
+const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
 
-canvas.addEventListener('mouseup', () => {
-  isZooming = false;
-});
+// Initialize gyroscope on mobile
+async function initGyro() {
+  if (!isMobile) return;
+  
+  if (window.DeviceOrientationEvent) {
+    // iOS 13+ requires permission
+    if (typeof (DeviceOrientationEvent as any).requestPermission === 'function') {
+      try {
+        const permission = await (DeviceOrientationEvent as any).requestPermission();
+        if (permission === 'granted') {
+          useGyro = true;
+          window.addEventListener('deviceorientation', handleOrientation);
+          console.log('📱 Gyroscope enabled');
+        }
+      } catch (error) {
+        console.log('⚠️ Gyroscope permission denied');
+      }
+    } else {
+      // Android and older iOS - no permission needed
+      useGyro = true;
+      window.addEventListener('deviceorientation', handleOrientation);
+      console.log('📱 Gyroscope enabled');
+    }
+  }
+}
 
-canvas.addEventListener('mouseleave', () => {
-  isZooming = false;
-});
+function handleOrientation(event: DeviceOrientationEvent) {
+  gyroAlpha = event.alpha || 0;
+  gyroBeta = event.beta || 0;
+  gyroGamma = event.gamma || 0;
+}
+
+function calibrateGyro() {
+  gyroCalibrationBeta = gyroBeta;
+  gyroCalibrationGamma = gyroGamma;
+  console.log('🎯 Gyroscope calibrated');
+}
+
+// Track mouse movement (desktop only)
+if (!isMobile) {
+  window.addEventListener('mousemove', (event) => {
+    // Normalize mouse position to -1 to 1 range
+    mouseX = (event.clientX / window.innerWidth) * 2 - 1;
+    mouseY = -(event.clientY / window.innerHeight) * 2 + 1; // Invert Y axis
+  });
+
+  // Track mouse clicks for zoom
+  canvas.addEventListener('mousedown', () => {
+    isZooming = true;
+  });
+
+  canvas.addEventListener('mouseup', () => {
+    isZooming = false;
+  });
+
+  canvas.addEventListener('mouseleave', () => {
+    isZooming = false;
+  });
+} else {
+  // Track touch for zoom on mobile
+  canvas.addEventListener('touchstart', () => {
+    isZooming = true;
+  });
+
+  canvas.addEventListener('touchend', () => {
+    isZooming = false;
+  });
+
+  canvas.addEventListener('touchcancel', () => {
+    isZooming = false;
+  });
+}
 
 // Enable shadow rendering
 renderer.shadowMap.enabled = true;
@@ -454,6 +517,51 @@ function createUI(_clips: THREE.AnimationClip[]): void {
   skeletonToggle.appendChild(label);
   content.appendChild(skeletonToggle);
   
+  // Gyro calibration button (mobile only)
+  if (isMobile) {
+    const gyroButton = document.createElement('button');
+    gyroButton.textContent = '🎯 Calibrate Gyro';
+    gyroButton.style.cssText = `
+      width: 100%;
+      padding: 8px;
+      margin-top: 8px;
+      background: rgba(100, 150, 255, 0.3);
+      border: 1px solid rgba(100, 150, 255, 0.5);
+      border-radius: 4px;
+      color: white;
+      cursor: pointer;
+      font-family: monospace;
+      font-size: 12px;
+    `;
+    gyroButton.onclick = () => {
+      calibrateGyro();
+      // Visual feedback
+      gyroButton.textContent = '✓ Calibrated!';
+      gyroButton.style.background = 'rgba(100, 255, 100, 0.3)';
+      gyroButton.style.borderColor = 'rgba(100, 255, 100, 0.5)';
+      setTimeout(() => {
+        gyroButton.textContent = '🎯 Calibrate Gyro';
+        gyroButton.style.background = 'rgba(100, 150, 255, 0.3)';
+        gyroButton.style.borderColor = 'rgba(100, 150, 255, 0.5)';
+      }, 1500);
+    };
+    content.appendChild(gyroButton);
+    
+    // Add gyro status indicator
+    const gyroStatus = document.createElement('div');
+    gyroStatus.style.cssText = `
+      margin-top: 8px;
+      padding: 6px;
+      background: rgba(50, 50, 50, 0.5);
+      border-radius: 4px;
+      font-size: 10px;
+      text-align: center;
+      opacity: 0.7;
+    `;
+    gyroStatus.textContent = useGyro ? '📱 Gyro Active' : '🖱️ Mouse Active';
+    content.appendChild(gyroStatus);
+  }
+  
   document.body.appendChild(panel);
 }
 
@@ -760,6 +868,17 @@ async function loadAll(): Promise<void> {
   console.log(`  Character Y: ${charGltf.scene.position.y.toFixed(3)}m`);
   
   console.log('\n✅ Scene loaded successfully');
+  
+  // Initialize gyroscope on mobile devices
+  if (isMobile) {
+    // Auto-calibrate to current position
+    setTimeout(() => {
+      calibrateGyro();
+    }, 1000); // Wait 1 second for gyro values to stabilize
+    
+    // Request permission and start gyro
+    await initGyro();
+  }
 }
 loadAll().catch(err => {
   console.error('Error loading models:', err);
@@ -820,7 +939,7 @@ function tick(currentTime: number = 0): void {
     zoomProgress = Math.max(0, zoomProgress - zoomSpeed);
   }
   
-  // Update mouse-follow camera (look-at system to prevent tilt)
+  // Update camera (adaptive: gyro on mobile, mouse on desktop)
   // Calculate camera's local coordinate system
   const cameraRight = new THREE.Vector3();
   const cameraUp = new THREE.Vector3();
@@ -831,18 +950,32 @@ function tick(currentTime: number = 0): void {
   cameraRight.crossVectors(cameraForward, new THREE.Vector3(0, 1, 0)).normalize();
   cameraUp.crossVectors(cameraRight, cameraForward).normalize();
   
-  // Calculate target look-at position based on mouse
+  // Get input values (either from gyro or mouse)
+  let inputX = mouseX;
+  let inputY = mouseY;
+  
+  if (useGyro) {
+    // Use device tilt (gamma for left/right, beta for up/down)
+    // Apply calibration offset and normalize to -1 to 1 range
+    const tiltX = THREE.MathUtils.clamp((gyroGamma - gyroCalibrationGamma) / 30, -1, 1);  // ±30° range
+    const tiltY = THREE.MathUtils.clamp((gyroBeta - gyroCalibrationBeta) / 30, -1, 1);
+    
+    inputX = tiltX;
+    inputY = -tiltY; // Invert Y for natural feel
+  }
+  
+  // Calculate target look-at position based on input
   const targetLookAt = originalLookAtTarget.clone();
-  targetLookAt.add(cameraRight.clone().multiplyScalar(mouseX * mouseSensitivity));
-  targetLookAt.add(cameraUp.clone().multiplyScalar(mouseY * mouseSensitivity));
+  targetLookAt.add(cameraRight.clone().multiplyScalar(inputX * mouseSensitivity));
+  targetLookAt.add(cameraUp.clone().multiplyScalar(inputY * mouseSensitivity));
   
   // Smoothly interpolate current look-at towards target
   currentLookAtTarget.lerp(targetLookAt, smoothing);
   
-  // Add subtle parallax translation (camera moves slightly in direction of mouse)
+  // Add subtle parallax translation (camera moves slightly in direction of input)
   const parallaxOffset = new THREE.Vector3();
-  parallaxOffset.add(cameraRight.clone().multiplyScalar(mouseX * parallaxAmount));
-  parallaxOffset.add(cameraUp.clone().multiplyScalar(mouseY * parallaxAmount));
+  parallaxOffset.add(cameraRight.clone().multiplyScalar(inputX * parallaxAmount));
+  parallaxOffset.add(cameraUp.clone().multiplyScalar(inputY * parallaxAmount));
   
   // Apply zoom by moving camera towards look-at target
   const zoomedPosition = new THREE.Vector3();
