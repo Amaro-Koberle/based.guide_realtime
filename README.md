@@ -6,22 +6,29 @@ Built with Three.js, TypeScript, and Vite.
 
 ## Features
 
-- Real-time 3D rendering with optimized lighting and shadows
-- Dynamic GLB model loading with texture compression
-- Automatic skydome-based ambient lighting
-- Responsive design for desktop and mobile
-- **Runtime character animation system** with crossfading and multiple clip support
-- **Performance optimizations** with FPS limiting and auto-pause when tab is hidden
+- ✨ Real-time 3D rendering with optimized lighting and shadows
+- 🎮 Mouse-controlled camera with parallax and click-to-zoom
+- 🎭 Animated character with smooth animation playback
+- 🌅 Dynamic skydome and ocean backdrop
+- 📦 Multi-GLB asset pipeline (character, environment, scene)
+- ⚡ Performance optimizations with FPS limiting and auto-pause
+- 🐛 Collapsible debug panel with skeleton viewer
 
-## Development
+## Quick Start
 
+### Development
 ```bash
 npm install
 npm run dev
 ```
 
-## Build
+### Exporting from Blender
+```bash
+./scripts/export.sh
+```
+See [docs/EXPORT_WORKFLOW.md](docs/EXPORT_WORKFLOW.md) for details.
 
+### Build
 ```bash
 npm run build
 npm run preview
@@ -32,79 +39,66 @@ npm run preview
 - **Three.js** - 3D rendering engine
 - **TypeScript** - Type safety
 - **Vite** - Build tooling
+- **Blender** - 3D asset creation
 
-## Animation System
+## Asset Pipeline
 
-The app includes a flexible runtime animation system that supports:
+The project uses a three-file GLB export system:
 
-### Features
-- ✅ Loads animations from both embedded GLB and separate animation files
-- ✅ One AnimationMixer per character root
-- ✅ Multiple animation clips with smooth crossfading
-- ✅ Automatic clip detection and fallback handling
-- ✅ Debug helpers for listing and testing animations
+1. **`CHAR_MrProBonobo.glb`** - Character mesh, rig, and animations
+2. **`ENV_ApeEscapeOffice.glb`** - Environment geometry and lights
+3. **`RT_SCENE_ApeEscape.glb`** - Camera position and animation data
 
-### File Structure
-- Character model: `/models/CHAR_MrProBonobo.glb`
-- Animations: `/anims/ANIM_RT_MrProBonobo.glb`
+Benefits:
+- Modular assets that can be updated independently
+- Faster iteration (change character without re-exporting environment)
+- Smaller file sizes (reuse character in multiple scenes)
 
-### Debug Console API
+## Camera Controls
 
-Open browser console and use these helpers:
+- **Mouse Move**: Camera angles to follow cursor (subtle parallax)
+- **Click + Hold**: Zoom in towards cursor position
+- **Release**: Zoom back out to default position
 
-```javascript
-// List all available animations
-animDebug.list()
+## Performance Features
 
-// Play an animation (loops by default)
-animDebug.play('Test_Baked')
+- ✅ **FPS Limiting**: Default 60 FPS, adjustable 30-120 FPS
+- ✅ **Auto-Pause**: Stops rendering when tab is hidden
+- ✅ **Pixel Ratio Cap**: Limits to 2x for high-DPI displays
+- ✅ **Optimized Renderer**: Disables unused buffers
 
-// Play animation without looping
-animDebug.play('AnimationName', false)
+## Debug Panel
 
-// Stop current animation
-animDebug.stopAnimation(animDebug.getCharacter())
+Press the collapsed panel in the top-left to access:
+- **Show Skeleton**: Toggle character bone visualization
+- **FPS Display**: Real-time performance monitoring
+- **FPS Cap Slider**: Adjust frame rate limit
+
+## Project Structure
+
+```
+based.guide_realtime/
+├── src/
+│   └── main.ts          # Main Three.js app
+├── public/
+│   ├── CHAR_MrProBonobo.glb
+│   ├── ENV_ApeEscapeOffice.glb
+│   └── RT_SCENE_ApeEscape.glb
+├── scripts/             # Blender export automation
+│   ├── export.sh
+│   ├── export_char.py
+│   ├── export_env.py
+│   └── export_rt_scene.py
+└── docs/
+    └── EXPORT_WORKFLOW.md
 ```
 
-### Code Usage
+## Known Issues
 
-```typescript
-// Play an animation with crossfade
-playAnimation(characterRoot, 'ClipName', loop = true, crossfadeDuration = 0.3)
+- Character has a temporary -5cm Y offset to match visual appearance from Blender (cause unknown)
 
-// Stop animation with fade out
-stopAnimation(characterRoot, fadeOutDuration = 0.3)
+## Documentation
 
-// List available clips
-debugListClips(animationClipsArray)
-```
-
-### How It Works
-
-1. **Loading**: The system loads the character GLB first, then attempts to load a separate animation GLB
-2. **Clip Detection**: It checks both files for animation clips and merges them
-3. **Auto-Play**: Tries to play "Test_Baked" animation, with fallback to variations or first available clip
-4. **Runtime**: AnimationMixer updates every frame in the render loop
-5. **Crossfading**: Smooth transitions between animations with configurable fade duration
-
-## Performance Optimizations
-
-The app includes several optimizations to reduce battery drain and heat:
-
-### Automatic Features
-- ✅ **FPS Limiting**: Capped at 60 FPS by default (adjustable via UI slider)
-- ✅ **Tab Visibility Detection**: Automatically pauses rendering when tab is hidden
-- ✅ **Pixel Ratio Cap**: Limits to 2x to reduce load on high-DPI displays
-- ✅ **GPU Preference**: Uses dedicated GPU when available
-- ✅ **Optimized Renderer**: Disables unused buffers (stencil) for better performance
-
-### User Controls
-- **FPS Cap Slider**: Adjust between 30-120 FPS via UI panel
-- **Stats Panel**: Monitor real-time FPS and frame time
-- Lower FPS = cooler laptop, longer battery life
-
-### Why These Help
-- **120 FPS → 60 FPS**: ~50% reduction in GPU/CPU usage
-- **60 FPS → 30 FPS**: Another ~50% reduction (good for battery saving)
-- **Tab pause**: 100% GPU savings when not viewing
+- [Export Workflow](docs/EXPORT_WORKFLOW.md) - Blender to Three.js pipeline
+- [Project Structure](docs/PROJECT_STRUCTURE.md) - Directory layout and file organization
 

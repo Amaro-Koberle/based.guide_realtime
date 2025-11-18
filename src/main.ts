@@ -53,7 +53,6 @@ let currentCharacterRoot: THREE.Object3D | null = null;
 let sceneRoot: THREE.Group | null = null;
 let characterRoot: THREE.Object3D | null = null;
 let environmentRoot: THREE.Object3D | null = null;
-let environmentMaterialsBackup: Map<THREE.Mesh, THREE.Material | THREE.Material[]> = new Map();
 
 const canvas = document.getElementById('c') as HTMLCanvasElement;
 const renderer = new THREE.WebGLRenderer({ 
@@ -242,52 +241,6 @@ function stopAnimation(root: THREE.Object3D, fadeOutDuration: number = 0.3): voi
 }
 
 
-function applyGrayMaterialToEnvironment(): void {
-  if (!environmentRoot) {
-    console.warn('No environment loaded');
-    return;
-  }
-  
-  // Create a simple gray material
-  const grayMaterial = new THREE.MeshStandardMaterial({
-    color: 0x808080,
-    roughness: 0.8,
-    metalness: 0.2
-  });
-  
-  let meshCount = 0;
-  environmentRoot.traverse((obj: THREE.Object3D) => {
-    if (obj instanceof THREE.Mesh) {
-      // Backup original material if not already backed up
-      if (!environmentMaterialsBackup.has(obj)) {
-        environmentMaterialsBackup.set(obj, obj.material);
-      }
-      obj.material = grayMaterial;
-      meshCount++;
-    }
-  });
-  
-  console.log(`✓ Applied gray material to ${meshCount} environment meshes`);
-}
-
-function restoreEnvironmentMaterials(): void {
-  if (!environmentRoot) {
-    console.warn('No environment loaded');
-    return;
-  }
-  
-  let meshCount = 0;
-  environmentRoot.traverse((obj: THREE.Object3D) => {
-    if (obj instanceof THREE.Mesh && environmentMaterialsBackup.has(obj)) {
-      obj.material = environmentMaterialsBackup.get(obj)!;
-      meshCount++;
-    }
-  });
-  
-  environmentMaterialsBackup.clear();
-  console.log(`✓ Restored original materials to ${meshCount} environment meshes`);
-}
-
 function toggleSkeleton(visible: boolean): void {
   if (!currentCharacterRoot) {
     console.warn('No character loaded');
@@ -354,7 +307,7 @@ function toggleSkeleton(visible: boolean): void {
 }
 
 
-function createUI(clips: THREE.AnimationClip[]): void {
+function createUI(_clips: THREE.AnimationClip[]): void {
   const panel = document.createElement('div');
   panel.style.cssText = `
     position: absolute;
@@ -482,30 +435,6 @@ function createUI(clips: THREE.AnimationClip[]): void {
   fpsControl.appendChild(fpsLabel);
   content.appendChild(fpsControl);
   
-  // Environment toggle
-  const envToggle = document.createElement('label');
-  envToggle.style.cssText = `
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 8px;
-    cursor: pointer;
-  `;
-  const envCheckbox = document.createElement('input');
-  envCheckbox.type = 'checkbox';
-  envCheckbox.checked = true;
-  envCheckbox.onchange = (e) => {
-    if (environmentRoot) {
-      environmentRoot.visible = (e.target as HTMLInputElement).checked;
-    }
-  };
-  envCheckbox.style.cursor = 'pointer';
-  envToggle.appendChild(envCheckbox);
-  const envLabel = document.createElement('span');
-  envLabel.textContent = 'Show Environment';
-  envToggle.appendChild(envLabel);
-  content.appendChild(envToggle);
-  
   // Skeleton toggle
   const skeletonToggle = document.createElement('label');
   skeletonToggle.style.cssText = `
@@ -524,147 +453,6 @@ function createUI(clips: THREE.AnimationClip[]): void {
   label.textContent = 'Show Skeleton';
   skeletonToggle.appendChild(label);
   content.appendChild(skeletonToggle);
-  
-  // Gray material button
-  const grayBtn = document.createElement('button');
-  grayBtn.textContent = '🎨 Gray Environment Material';
-  grayBtn.style.cssText = `
-    width: 100%;
-    padding: 8px;
-    margin-top: 4px;
-    background: rgba(150, 150, 150, 0.2);
-    color: white;
-    border: 1px solid rgba(150, 150, 150, 0.4);
-    border-radius: 4px;
-    cursor: pointer;
-    font-family: monospace;
-    font-size: 11px;
-  `;
-  let grayApplied = false;
-  grayBtn.onclick = () => {
-    if (!grayApplied) {
-      applyGrayMaterialToEnvironment();
-      grayBtn.textContent = '🎨 Restore Materials';
-      grayBtn.style.background = 'rgba(150, 150, 150, 0.4)';
-      grayApplied = true;
-    } else {
-      restoreEnvironmentMaterials();
-      grayBtn.textContent = '🎨 Gray Environment Material';
-      grayBtn.style.background = 'rgba(150, 150, 150, 0.2)';
-      grayApplied = false;
-    }
-  };
-  content.appendChild(grayBtn);
-  
-  // Animation buttons section
-  if (clips.length > 0) {
-    // Check if animations have bone transforms
-    const hasBoneAnimations = clips.some(clip => 
-      clip.tracks.some(track => 
-        track.name.includes('.position') || 
-        track.name.includes('.quaternion') || 
-        track.name.includes('.scale')
-      )
-    );
-    
-    // Warning if no bone animations
-    if (!hasBoneAnimations) {
-      const warningBox = document.createElement('div');
-      warningBox.textContent = '⚠️ Animations missing bone data - check console';
-      warningBox.style.cssText = `
-        margin-top: 15px;
-        margin-bottom: 8px;
-        padding: 8px;
-        background: rgba(200, 50, 50, 0.3);
-        border: 1px solid rgba(255, 100, 100, 0.5);
-        border-radius: 4px;
-        font-size: 10px;
-        color: #ffcccc;
-        text-align: center;
-        cursor: help;
-      `;
-      warningBox.title = 'Animation GLB only contains shape keys/morph targets. Re-export with bone keyframes from Blender.';
-      content.appendChild(warningBox);
-    }
-    
-    const animTitle = document.createElement('div');
-    animTitle.textContent = 'Animations:';
-    animTitle.style.cssText = `
-      margin-top: 15px;
-      margin-bottom: 8px;
-      opacity: 0.7;
-      font-size: 11px;
-      border-top: 1px solid rgba(255, 255, 255, 0.2);
-      padding-top: 10px;
-    `;
-    content.appendChild(animTitle);
-    
-    clips.forEach(clip => {
-      const btn = document.createElement('button');
-      btn.textContent = clip.name;
-      btn.dataset.clipName = clip.name;
-      btn.style.cssText = `
-        width: 100%;
-        padding: 8px;
-        margin-bottom: 5px;
-        background: rgba(255, 255, 255, 0.1);
-        color: white;
-        border: 1px solid rgba(255, 255, 255, 0.3);
-        border-radius: 4px;
-        cursor: pointer;
-        font-family: monospace;
-        font-size: 11px;
-        transition: all 0.2s;
-      `;
-      
-      btn.onmouseenter = () => {
-        btn.style.background = 'rgba(255, 255, 255, 0.2)';
-        btn.style.borderColor = 'rgba(255, 255, 255, 0.5)';
-      };
-      
-      btn.onmouseleave = () => {
-        const state = currentCharacterRoot && animationStates.get(currentCharacterRoot);
-        const isPlaying = state?.currentAction?.getClip().name === clip.name;
-        btn.style.background = isPlaying ? 'rgba(100, 200, 100, 0.3)' : 'rgba(255, 255, 255, 0.1)';
-        btn.style.borderColor = isPlaying ? 'rgba(100, 200, 100, 0.6)' : 'rgba(255, 255, 255, 0.3)';
-      };
-      
-      btn.onclick = () => {
-        console.log(`🎬 Button clicked for animation: "${clip.name}"`);
-        if (currentCharacterRoot) {
-          const result = playAnimation(currentCharacterRoot, clip.name, true);
-          console.log(`Animation play result:`, result ? 'Success' : 'Failed');
-          
-          // Update all button states
-          content.querySelectorAll('button[data-clip-name]').forEach(b => {
-            const isActive = (b as HTMLButtonElement).dataset.clipName === clip.name;
-            (b as HTMLElement).style.background = isActive ? 'rgba(100, 200, 100, 0.3)' : 'rgba(255, 255, 255, 0.1)';
-            (b as HTMLElement).style.borderColor = isActive ? 'rgba(100, 200, 100, 0.6)' : 'rgba(255, 255, 255, 0.3)';
-          });
-        } else {
-          console.error('No character root found!');
-        }
-      };
-      
-      content.appendChild(btn);
-      
-      // Highlight currently playing animation
-      const state = currentCharacterRoot && animationStates.get(currentCharacterRoot);
-      if (state?.currentAction?.getClip().name === clip.name) {
-        btn.style.background = 'rgba(100, 200, 100, 0.3)';
-        btn.style.borderColor = 'rgba(100, 200, 100, 0.6)';
-      }
-    });
-  } else {
-    const noAnims = document.createElement('div');
-    noAnims.textContent = 'No animations found';
-    noAnims.style.cssText = `
-      margin-top: 10px;
-      opacity: 0.5;
-      font-size: 10px;
-    `;
-    content.appendChild(noAnims);
-  }
   
   document.body.appendChild(panel);
 }
@@ -740,6 +528,11 @@ async function loadAll(): Promise<void> {
   charGltf.scene.position.copy(charPosition);
   charGltf.scene.quaternion.copy(charRotation);
   charGltf.scene.scale.copy(charScale);
+  
+  // TEMPORARY FIX: Manual vertical offset to match Blender visual appearance
+  // Character appears ~5cm higher in Three.js than Blender despite identical Y=0 position (cause unknown)
+  charGltf.scene.position.y -= 0.05;
+  
   scene.add(charGltf.scene);
   console.log(`  → Character placed at Y: ${charGltf.scene.position.y.toFixed(3)}m`);
   

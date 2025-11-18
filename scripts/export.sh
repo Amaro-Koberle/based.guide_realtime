@@ -2,6 +2,9 @@
 
 # GLB Export Script
 # Exports character, environment, and scene (camera + animations) as separate GLBs
+# Run from project root: ./scripts/export.sh
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 echo ""
 echo "🎬 Exporting GLBs..."
@@ -9,7 +12,7 @@ echo ""
 
 # --- Export Character ---
 echo "📦 Exporting character..."
-/Applications/Blender.app/Contents/MacOS/Blender --background --python export_char.py 2>&1 | \
+/Applications/Blender.app/Contents/MacOS/Blender --background --python "$SCRIPT_DIR/export_char.py" 2>&1 | \
   grep -v "WARNING: Animation target" | \
   grep -v "WARNING: Baking animation" | \
   grep -v "Dependency cycle detected" | \
@@ -30,7 +33,7 @@ fi
 # --- Export Environment ---
 echo ""
 echo "🏢 Exporting environment..."
-/Applications/Blender.app/Contents/MacOS/Blender --background --python export_env.py 2>&1 | \
+/Applications/Blender.app/Contents/MacOS/Blender --background --python "$SCRIPT_DIR/export_env.py" 2>&1 | \
   grep -v "INFO: Extracting primitive" | \
   grep -v "INFO: Primitives created" | \
   grep -v "Error: Tangent space" | \
@@ -45,7 +48,7 @@ fi
 # --- Export Scene (Camera + Animations) ---
 echo ""
 echo "🎬 Exporting scene (camera + animations)..."
-/Applications/Blender.app/Contents/MacOS/Blender --background --python export_rt_scene.py 2>&1 | \
+/Applications/Blender.app/Contents/MacOS/Blender --background --python "$SCRIPT_DIR/export_rt_scene.py" 2>&1 | \
   grep -v "WARNING: Animation target" | \
   grep -v "WARNING: Baking animation" | \
   grep -v "Dependency cycle detected" | \
