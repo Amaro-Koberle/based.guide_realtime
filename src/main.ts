@@ -1,5 +1,4 @@
 import * as THREE from 'three';
-import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { KTX2Loader } from 'three/examples/jsm/loaders/KTX2Loader.js';
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
@@ -75,10 +74,44 @@ scene.background = new THREE.Color(0x111111);
 const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 2000);
 camera.position.set(4, 3, 6);
 
-const controls = new OrbitControls(camera, renderer.domElement);
-controls.enableDamping = true;
-controls.dampingFactor = 0.05;
-controls.maxPolarAngle = Math.PI / 1.5; // Prevent looking too far down
+// Mouse-follow camera system (replaces OrbitControls)
+// Camera stays at fixed position but rotates to follow cursor
+let mouseX = 0;
+let mouseY = 0;
+const mouseSensitivity = 1.0; // Max offset distance in world units
+const parallaxAmount = 0.15; // Subtle camera translation for parallax effect (world units)
+const smoothing = 0.08; // Lower = smoother but slower response
+
+// Store the original camera position and look-at target from GLB
+let originalCameraPosition = new THREE.Vector3();
+let originalLookAtTarget = new THREE.Vector3();
+let currentLookAtTarget = new THREE.Vector3();
+
+// Zoom system
+let isZooming = false;
+let zoomProgress = 0;
+const zoomSpeed = 0.05; // How fast to zoom in/out (much slower, was 0.15)
+const zoomAmount = 0.3; // How much to zoom (0.3 = 30% closer, reduced by 50%)
+
+// Track mouse movement
+window.addEventListener('mousemove', (event) => {
+  // Normalize mouse position to -1 to 1 range
+  mouseX = (event.clientX / window.innerWidth) * 2 - 1;
+  mouseY = -(event.clientY / window.innerHeight) * 2 + 1; // Invert Y axis
+});
+
+// Track mouse clicks for zoom
+canvas.addEventListener('mousedown', () => {
+  isZooming = true;
+});
+
+canvas.addEventListener('mouseup', () => {
+  isZooming = false;
+});
+
+canvas.addEventListener('mouseleave', () => {
+  isZooming = false;
+});
 
 // Enable shadow rendering
 renderer.shadowMap.enabled = true;
@@ -660,11 +693,19 @@ async function loadAll(): Promise<void> {
   
   console.log('\n📍 Looking for character mount point in scene...');
   
-  // Look for CHAR_Mount empty to position character
+  // Look for CHAR_MOUNT_ empty to position character
+  // Naming convention: CHAR_MOUNT_<location>_<object> (e.g., CHAR_MOUNT_Office_Chair)
   let foundMount = false;
+  const allMounts: string[] = [];
+  
   sceneGltf.scene.traverse((obj: THREE.Object3D) => {
-    // Look for CHAR_Mount empty (or similar naming patterns)
-    if (obj.name && (obj.name.includes('CHAR_Mount') || obj.name.includes('CHAR_Position'))) {
+    // Collect all mount points for logging
+    if (obj.name && obj.name.startsWith('CHAR_MOUNT_')) {
+      allMounts.push(obj.name);
+    }
+    
+    // Look for CHAR_MOUNT_ empties (new naming convention) or legacy CHAR_Mount/CHAR_Position
+    if (obj.name && (obj.name.startsWith('CHAR_MOUNT_') || obj.name.includes('CHAR_Mount') || obj.name.includes('CHAR_Position'))) {
       obj.getWorldPosition(charPosition);
       obj.getWorldQuaternion(charRotation);
       obj.getWorldScale(charScale);
@@ -684,10 +725,15 @@ async function loadAll(): Promise<void> {
     }
   });
   
+  if (allMounts.length > 1) {
+    console.log(`  ℹ️ Found ${allMounts.length} mount points:`, allMounts);
+    console.log(`  - Using first found: "${allMounts[0]}"`);
+  }
+  
   if (!foundMount) {
-    console.warn('  ⚠️ No CHAR_Mount found in scene GLB');
+    console.warn('  ⚠️ No CHAR_MOUNT_ empty found in scene GLB');
     console.log('  💡 Character will be placed at world origin (0, 0, 0)');
-    console.log('  💡 TIP: Add an Empty named "CHAR_Mount" in your Blender scene to set character position');
+    console.log('  💡 TIP: Add an Empty named "CHAR_MOUNT_<location>" in your Blender scene');
   }
   
   // Add character to scene with the position from RT_SCENE
@@ -749,6 +795,16 @@ async function loadAll(): Promise<void> {
     camera.rotation.copy(glbCamera.rotation);
     camera.quaternion.copy(glbCamera.quaternion);
     
+    // Store original camera position for mouse-follow system
+    originalCameraPosition.copy(glbCamera.position);
+    
+    // Calculate the original look-at target by projecting forward from camera
+    const forward = new THREE.Vector3(0, 0, -1);
+    forward.applyQuaternion(glbCamera.quaternion);
+    const lookDistance = 5; // Distance to look-at point
+    originalLookAtTarget.copy(glbCamera.position).add(forward.multiplyScalar(lookDistance));
+    currentLookAtTarget.copy(originalLookAtTarget);
+    
     // If it's a perspective camera, also copy FOV and other properties
     if (glbCamera instanceof THREE.PerspectiveCamera) {
       camera.fov = glbCamera.fov;
@@ -759,16 +815,9 @@ async function loadAll(): Promise<void> {
       console.log('  - Near/Far:', glbCamera.near, '/', glbCamera.far);
     }
     
-    // Update orbit controls target to look at the right place
-    // We can estimate the target by projecting forward from the camera
-    const direction = new THREE.Vector3(0, 0, -1);
-    direction.applyQuaternion(camera.quaternion);
-    const distance = 5; // Adjust this based on your scene
-    controls.target.copy(camera.position).add(direction.multiplyScalar(distance));
-    controls.update();
-    
     console.log('✓ Camera position and orientation applied from GLB');
-    console.log('  - Controls target:', controls.target.toArray());
+    console.log('  - Camera will follow mouse movement with fixed position');
+    console.log('  - Look-at target:', originalLookAtTarget.toArray());
   } else {
     console.warn('⚠️ No camera found in GLB, using default camera setup');
   }
@@ -947,7 +996,45 @@ function tick(currentTime: number = 0): void {
     state.mixer.update(delta);
   });
   
-  controls.update();
+  // Update zoom progress
+  if (isZooming) {
+    zoomProgress = Math.min(1, zoomProgress + zoomSpeed);
+  } else {
+    zoomProgress = Math.max(0, zoomProgress - zoomSpeed);
+  }
+  
+  // Update mouse-follow camera (look-at system to prevent tilt)
+  // Calculate camera's local coordinate system
+  const cameraRight = new THREE.Vector3();
+  const cameraUp = new THREE.Vector3();
+  const cameraForward = new THREE.Vector3();
+  
+  // Get the camera's orientation vectors from the original look direction
+  cameraForward.subVectors(originalLookAtTarget, originalCameraPosition).normalize();
+  cameraRight.crossVectors(cameraForward, new THREE.Vector3(0, 1, 0)).normalize();
+  cameraUp.crossVectors(cameraRight, cameraForward).normalize();
+  
+  // Calculate target look-at position based on mouse
+  const targetLookAt = originalLookAtTarget.clone();
+  targetLookAt.add(cameraRight.clone().multiplyScalar(mouseX * mouseSensitivity));
+  targetLookAt.add(cameraUp.clone().multiplyScalar(mouseY * mouseSensitivity));
+  
+  // Smoothly interpolate current look-at towards target
+  currentLookAtTarget.lerp(targetLookAt, smoothing);
+  
+  // Add subtle parallax translation (camera moves slightly in direction of mouse)
+  const parallaxOffset = new THREE.Vector3();
+  parallaxOffset.add(cameraRight.clone().multiplyScalar(mouseX * parallaxAmount));
+  parallaxOffset.add(cameraUp.clone().multiplyScalar(mouseY * parallaxAmount));
+  
+  // Apply zoom by moving camera towards look-at target
+  const zoomedPosition = new THREE.Vector3();
+  zoomedPosition.copy(originalCameraPosition);
+  zoomedPosition.add(parallaxOffset); // Add parallax translation
+  zoomedPosition.lerp(currentLookAtTarget, zoomProgress * zoomAmount); // Apply zoom
+  
+  camera.position.copy(zoomedPosition);
+  camera.lookAt(currentLookAtTarget);
   
   renderer.render(scene, camera);
   
