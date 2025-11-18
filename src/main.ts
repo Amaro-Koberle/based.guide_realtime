@@ -8,15 +8,21 @@ import * as SkeletonUtils from 'three/examples/jsm/utils/SkeletonUtils.js';
 import Stats from 'stats.js';
 
 /**
- * Animation System
+ * Real-time Scene Loader
+ * 
+ * Workflow:
+ * - Single GLB file contains everything: character, environment, animations, and camera
+ * - In Blender, linked collections (CHAR, ENV) are assembled in an RT_SCENE file
+ * - Camera positioning and animation are done in the RT_SCENE file
+ * - Export as one GLB to /public/RT_SCENE_*.glb
  * 
  * Features:
- * - Loads animations from both embedded (in character GLB) and separate GLB files
+ * - Loads complete scene from single GLB file
+ * - Extracts camera position, rotation, FOV from GLB and applies to Three.js camera
+ * - Automatically identifies character (SkinnedMesh) and environment collections
  * - Creates one AnimationMixer per character root
- * - Supports multiple clips with smooth crossfading
- * - Debug helpers to list available animations
- * - Automatic fallback if specified clip not found
- * - Validates that animations contain bone transforms (not just morph targets)
+ * - Supports multiple animation clips with smooth crossfading
+ * - Debug helpers to inspect animations and skeleton
  * 
  * Usage:
  * - playAnimation(characterRoot, 'AnimationName', loop = true, crossfadeDuration = 0.3)
@@ -24,7 +30,7 @@ import Stats from 'stats.js';
  * - debugListClips(clips) - logs all available animations
  * 
  * Common Issues:
- * - If character stays in T-pose: Animation GLB may only contain shape key/morph target data
+ * - If character stays in T-pose: Animation may only contain shape key/morph target data
  *   Fix: In Blender, ensure bone keyframes exist and "Bake Animation" is enabled in GLB export
  */
 
@@ -44,10 +50,10 @@ stats.showPanel(0); // 0: fps, 1: ms, 2: mb
 let skeletonHelper: THREE.SkeletonHelper | null = null;
 let currentCharacterRoot: THREE.Object3D | null = null;
 
-// Character management
-let characterTemplate: any = null; // Store the loaded GLTF for cloning
-let characterInstances: THREE.Object3D[] = [];
-let environmentScene: THREE.Group | null = null;
+// Scene management
+let sceneRoot: THREE.Group | null = null;
+let characterRoot: THREE.Object3D | null = null;
+let environmentRoot: THREE.Object3D | null = null;
 let environmentMaterialsBackup: Map<THREE.Mesh, THREE.Material | THREE.Material[]> = new Map();
 
 const canvas = document.getElementById('c') as HTMLCanvasElement;
@@ -82,7 +88,7 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 const ambientFill = new THREE.HemisphereLight(
   0x87ceeb, // Default sky color (will be replaced with skydome emissive)
   0x3a2a1f, // Ground color - dark warm tone
-  0.8       // Intensity
+  1.2       // Intensity (increased for softer overall lighting)
 );
 scene.add(ambientFill);
 
@@ -203,7 +209,7 @@ function stopAnimation(root: THREE.Object3D, fadeOutDuration: number = 0.3): voi
 
 
 function applyGrayMaterialToEnvironment(): void {
-  if (!environmentScene) {
+  if (!environmentRoot) {
     console.warn('No environment loaded');
     return;
   }
@@ -216,7 +222,7 @@ function applyGrayMaterialToEnvironment(): void {
   });
   
   let meshCount = 0;
-  environmentScene.traverse((obj: THREE.Object3D) => {
+  environmentRoot.traverse((obj: THREE.Object3D) => {
     if (obj instanceof THREE.Mesh) {
       // Backup original material if not already backed up
       if (!environmentMaterialsBackup.has(obj)) {
@@ -231,13 +237,13 @@ function applyGrayMaterialToEnvironment(): void {
 }
 
 function restoreEnvironmentMaterials(): void {
-  if (!environmentScene) {
+  if (!environmentRoot) {
     console.warn('No environment loaded');
     return;
   }
   
   let meshCount = 0;
-  environmentScene.traverse((obj: THREE.Object3D) => {
+  environmentRoot.traverse((obj: THREE.Object3D) => {
     if (obj instanceof THREE.Mesh && environmentMaterialsBackup.has(obj)) {
       obj.material = environmentMaterialsBackup.get(obj)!;
       meshCount++;
@@ -455,8 +461,8 @@ function createUI(clips: THREE.AnimationClip[]): void {
   envCheckbox.type = 'checkbox';
   envCheckbox.checked = true;
   envCheckbox.onchange = (e) => {
-    if (environmentScene) {
-      environmentScene.visible = (e.target as HTMLInputElement).checked;
+    if (environmentRoot) {
+      environmentRoot.visible = (e.target as HTMLInputElement).checked;
     }
   };
   envCheckbox.style.cursor = 'pointer';
@@ -630,217 +636,273 @@ function createUI(clips: THREE.AnimationClip[]): void {
 }
 
 async function loadAll(): Promise<void> {
-  console.log('Loading environment...');
-  const env = await gltf.loadAsync('/models/ENV_ApeEscapeOffice.glb');
-  console.log('Environment loaded:', env);
+  console.log('🎬 Loading scene and character...');
   
-  // Process environment: enable shadows and adjust lights
-  env.scene.traverse((obj: THREE.Object3D) => {
-    if (obj instanceof THREE.Mesh) {
-      obj.castShadow = true;
-      obj.receiveShadow = true;
-      const m = (obj as any).material;
-      if (m && m.map) m.map.colorSpace = THREE.SRGBColorSpace;
-      
-      // Extract skydome color for hemisphere light
-      if (obj.name === 'Skydome' && m) {
-        const skyColor = m.emissive || m.color;
-        if (skyColor) {
-          ambientFill.color.copy(skyColor);
-        }
-      }
-    }
-    
-    // Adjust directional light intensity from GLB
-    if (obj instanceof THREE.DirectionalLight) {
-      obj.intensity = obj.intensity / 1000; // 1000x reduction
-      obj.castShadow = true;
-      
-      // Adaptive shadow quality based on device
-      // Mobile devices get lower resolution shadows for better performance
-      const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-      const shadowMapSize = isMobile ? 1024 : 2048; // Reduced from 4096!
-      
-      obj.shadow.mapSize.width = shadowMapSize;
-      obj.shadow.mapSize.height = shadowMapSize;
-      obj.shadow.camera.near = 0.1;
-      obj.shadow.camera.far = 16;
-      obj.shadow.camera.left = -8;
-      obj.shadow.camera.right = 8;
-      obj.shadow.camera.top = 8;
-      obj.shadow.camera.bottom = -8;
-      obj.shadow.bias = -0.0001;
-      obj.shadow.normalBias = 0.02;
-      
-      console.log(`Shadow map size set to ${shadowMapSize}×${shadowMapSize} (${isMobile ? 'mobile' : 'desktop'})`);
-    }
-  });
+  // Load scene (environment, camera, backdrop)
+  console.log('  📦 Loading scene GLB...');
+  const sceneGltf = await gltf.loadAsync('/RT_SCENE_ApeEscape.glb');
+  console.log(`    ✓ Scene loaded (${sceneGltf.scenes[0].children.length} root objects)`);
   
-  scene.add(env.scene);
-  environmentScene = env.scene;
-
-  console.log('Loading character...');
-  const char = await gltf.loadAsync('/models/CHAR_MrProBonobo.glb');
+  // Load character separately
+  console.log('  🦍 Loading character GLB...');
+  const charGltf = await gltf.loadAsync('/CHAR_MrProBonobo.glb');
+  console.log(`    ✓ Character loaded (${charGltf.animations.length} animations)`);
   
-  // Store as template for cloning
-  characterTemplate = char;
+  // Store the root scene
+  sceneRoot = sceneGltf.scene;
+  scene.add(sceneRoot);
   
-  // Enable shadows on character
-  char.scene.traverse((obj: THREE.Object3D) => {
-    if (obj instanceof THREE.Mesh) {
-      obj.castShadow = true;
-      obj.receiveShadow = true;
-      const m = (obj as any).material;
-      if (m && m.map) m.map.colorSpace = THREE.SRGBColorSpace;
-    }
-  });
+  // Find character's intended position from RT_SCENE
+  // (The RT_SCENE file has the character positioned on the chair)
+  let charPosition = new THREE.Vector3(0, 0, 0);
+  let charRotation = new THREE.Quaternion();
+  let charScale = new THREE.Vector3(1, 1, 1);
   
-  scene.add(char.scene);
-  currentCharacterRoot = char.scene;
-  characterInstances.push(char.scene);
+  console.log('\n📍 Looking for character position in scene...');
   
-  // Debug: Inspect character structure
-  console.log('🔍 Character structure analysis:');
-  let hasSkeleton = false;
-  let meshCount = 0;
-  let skinnedMeshCount = 0;
-  let totalBones = 0;
-  
-  char.scene.traverse((obj: THREE.Object3D) => {
-    if (obj instanceof THREE.SkinnedMesh) {
-      skinnedMeshCount++;
-      hasSkeleton = true;
-      totalBones = obj.skeleton?.bones.length || 0;
-      console.log('  ✓ SkinnedMesh found:', obj.name);
-      console.log('    - Bones:', totalBones);
-      console.log('    - Vertices:', obj.geometry.attributes.position.count);
-      console.log('    - Bone Texture:', !!obj.skeleton.boneTexture);
-    } else if (obj instanceof THREE.Mesh) {
-      meshCount++;
-    }
-  });
-  
-  console.log(`  Summary: ${skinnedMeshCount} skinned mesh(es), ${meshCount} regular mesh(es), ${totalBones} bones`);
-  console.log(`  Has skeleton: ${hasSkeleton}`);
-  
-  
-  
-  // Load and setup animations
-  console.log('Loading character animations...');
-  let allClips: THREE.AnimationClip[] = [];
-  
-  // First, check if character GLB has embedded animations
-  if (char.animations && char.animations.length > 0) {
-    console.log('Found embedded animations in character GLB');
-    debugListClips(char.animations);
-    allClips.push(...char.animations);
-  }
-  
-  // Load separate animation GLB
-  try {
-    const animGltf = await gltf.loadAsync('/anims/ANIM_RT_MrProBonobo.glb');
-    
-    console.log('📦 Animation GLB loaded, analyzing structure...');
-    console.log('  - Has scene:', !!animGltf.scene);
-    console.log('  - Scene children:', animGltf.scene?.children.length || 0);
-    console.log('  - Animations found:', animGltf.animations?.length || 0);
-    
-    // Log the scene hierarchy to see what was exported
-    if (animGltf.scene) {
-      console.log('  - Scene hierarchy:');
-      animGltf.scene.traverse((obj: THREE.Object3D) => {
-        if (obj instanceof THREE.Bone) {
-          console.log(`    └─ Bone: ${obj.name}`);
-          return; // Only log first few bones
-        } else if (obj !== animGltf.scene) {
-          console.log(`    └─ ${obj.type}: ${obj.name}`);
-        }
+  // First, let's see what objects are actually in the scene
+  const sceneObjects: Array<{name: string, type: string, position: THREE.Vector3}> = [];
+  sceneGltf.scene.traverse((obj: THREE.Object3D) => {
+    if (obj.name && obj !== sceneGltf.scene) {
+      sceneObjects.push({
+        name: obj.name,
+        type: obj.type,
+        position: obj.position.clone()
       });
     }
     
-    if (animGltf.animations && animGltf.animations.length > 0) {
-      debugListClips(animGltf.animations);
-      allClips.push(...animGltf.animations);
-    } else {
-      console.warn('⚠️ Animation GLB loaded but contains NO animations!');
+    // Look for armature or any object with character name
+    if (obj.name && (obj.name.includes('MrProBonobo') || obj.name.includes('Armature'))) {
+      obj.getWorldPosition(charPosition);
+      obj.getWorldQuaternion(charRotation);
+      obj.getWorldScale(charScale);
+      console.log(`  ✓ Found character reference: "${obj.name}" (type: ${obj.type})`);
+      console.log(`    - Position: (${charPosition.x.toFixed(2)}, ${charPosition.y.toFixed(2)}, ${charPosition.z.toFixed(2)})`);
+      console.log(`    - Rotation: (${charRotation.x.toFixed(3)}, ${charRotation.y.toFixed(3)}, ${charRotation.z.toFixed(3)}, ${charRotation.w.toFixed(3)})`);
+      
+      // Hide this object from the scene GLB (we'll use the one from char GLB)
+      obj.visible = false;
     }
-  } catch (err) {
-    console.error('❌ Could not load separate animation GLB:', err);
+  });
+  
+  // Log all scene objects for debugging
+  console.log(`  - Scene contains ${sceneObjects.length} named objects`);
+  const relevantObjects = sceneObjects.filter(o => 
+    o.name.includes('MrProBonobo') || 
+    o.name.includes('Armature') || 
+    o.name.includes('CHAR')
+  );
+  if (relevantObjects.length > 0) {
+    console.log('  - Character-related objects:', relevantObjects.map(o => `${o.name} (${o.type})`));
+  } else {
+    console.warn('  ⚠️ No character-related objects found in scene GLB');
+    console.log('  - Sample objects:', sceneObjects.slice(0, 10).map(o => `${o.name} (${o.type})`));
   }
   
-  // Store animations in template for cloning
-  characterTemplate.animations = allClips;
+  // Add character to scene with the position from RT_SCENE
+  charGltf.scene.position.copy(charPosition);
+  charGltf.scene.quaternion.copy(charRotation);
+  charGltf.scene.scale.copy(charScale);
+  scene.add(charGltf.scene);
+  console.log('    ✓ Character added to scene at RT_SCENE position');
   
-  // Setup animation mixer if we have clips
-  if (allClips.length > 0) {
-    console.log(`\n🎬 Setting up animations...`);
-    console.log(`Available clips:`, allClips.map(c => c.name));
+  // Find and extract camera from the GLB
+  let glbCamera: THREE.Camera | null = null;
+  console.log('\n📷 Searching for camera...');
+  
+  // First, check the cameras array directly (more reliable)
+  if (sceneGltf.cameras && sceneGltf.cameras.length > 0) {
+    console.log(`  - Found ${sceneGltf.cameras.length} camera(s) in GLB cameras array`);
+    glbCamera = sceneGltf.cameras[0];
+    console.log(`  - Using camera: "${glbCamera.name}" (type: ${glbCamera.type})`);
     
-    // Check if animations are skeletal or morph targets
-    const hasBoneAnimations = allClips.some(clip => 
-      clip.tracks.some(track => 
-        track.name.includes('.position') || 
-        track.name.includes('.quaternion') || 
-        track.name.includes('.scale')
-      )
-    );
-    
-    if (!hasBoneAnimations) {
-      console.error('\n❌ CRITICAL: Animations contain NO BONE TRANSFORMS!');
-      console.error('   Character has skeleton with 403 bones, but animations only affect morph targets.');
-      console.error('   The character will remain in A/T-pose - bones are not animated.');
-      console.error('');
-      console.error('   🔧 BLENDER EXPORT FIX:');
-      console.error('   1. In Blender, select the Armature (not the mesh)');
-      console.error('   2. Go to Pose Mode (Ctrl+Tab or mode dropdown)');
-      console.error('   3. Check if your animation has keyframes on bones (orange/yellow frames in timeline)');
-      console.error('   4. When exporting GLB:');
-      console.error('      - Animation tab: Enable "Export Deformation Bones Only" or "Export All Bones"');
-      console.error('      - Make sure "Bake Animation" is enabled');
-      console.error('      - If using NLA strips, enable "NLA Strips" or "Export All Actions"');
-      console.error('   5. Re-export and replace the ANIM_RT_MrProBonobo.glb file');
-      console.error('');
-      console.error('   Current animation tracks:', allClips[0].tracks.map(t => t.name).join(', '));
-      console.error('   Expected tracks like: "DEF_SPINE_01.quaternion", "DEF_ARM_01L.position", etc.');
-      console.error('');
-    }
-    
-    // Use the character scene as the mixer root
-    const animState = setupAnimationMixer(char.scene, allClips);
-    console.log(`✓ Animation mixer created with ${allClips.length} clips`);
-    
-    // Auto-play the Sitting_Idle animation by default
-    const defaultAnim = 'Sitting_Idle';
-    console.log(`\n🎯 Attempting to play default animation: "${defaultAnim}"`);
-    const action = playAnimation(char.scene, defaultAnim, true);
-    
-    if (action) {
-      console.log(`✅ Successfully started "${defaultAnim}" animation`);
-      console.log(`   - Duration: ${action.getClip().duration}s`);
-      console.log(`   - Loop: ${action.loop === THREE.LoopRepeat}`);
-      console.log(`   - Enabled: ${action.enabled}`);
-      console.log(`   - Paused: ${action.paused}`);
-      console.log(`   - Time: ${action.time}`);
-    } else {
-      // Fallback to first animation if Sitting_Idle not found
-      console.warn(`⚠️ Animation "${defaultAnim}" not found!`);
-      console.log(`Available animations:`, allClips.map(c => c.name).join(', '));
-      console.log(`\n🔄 Falling back to first animation: "${allClips[0].name}"`);
-      const fallbackAction = playAnimation(char.scene, allClips[0].name, true);
-      if (fallbackAction) {
-        console.log(`✅ Fallback animation playing`);
-      } else {
-        console.error(`❌ Failed to play fallback animation!`);
+    // Camera in the cameras array might not have world position yet
+    // We need to find it in the scene to get its transform
+    sceneGltf.scene.traverse((obj: THREE.Object3D) => {
+      if (obj instanceof THREE.Camera && obj.uuid === glbCamera!.uuid) {
+        glbCamera = obj;
+        console.log('    ✓ Found camera in scene hierarchy with transforms');
       }
+    });
+    
+    // Log camera properties
+    if (glbCamera) {
+      console.log('    - Position:', glbCamera.position.toArray());
+      console.log('    - Rotation (euler):', glbCamera.rotation.toArray());
+      console.log('    - Quaternion:', glbCamera.quaternion.toArray());
+      // Get world position in case camera is nested
+      const worldPos = new THREE.Vector3();
+      glbCamera.getWorldPosition(worldPos);
+      console.log('    - World Position:', worldPos.toArray());
     }
   } else {
-    console.error('❌ No animations found for character!');
+    // Fallback: search in scene hierarchy
+    console.log('  - No cameras in cameras array, searching scene hierarchy...');
+    sceneGltf.scene.traverse((obj: THREE.Object3D) => {
+      if (obj instanceof THREE.Camera) {
+        console.log(`  - Found camera: "${obj.name}" (type: ${obj.type})`);
+        if (!glbCamera) {
+          glbCamera = obj;
+          console.log('    ✓ Using this camera');
+          console.log('    - Position:', obj.position.toArray());
+          console.log('    - Rotation (euler):', obj.rotation.toArray());
+          console.log('    - Quaternion:', obj.quaternion.toArray());
+        }
+      }
+    });
+  }
+  
+  // Apply camera position and orientation from GLB to our main camera
+  if (glbCamera) {
+    camera.position.copy(glbCamera.position);
+    camera.rotation.copy(glbCamera.rotation);
+    camera.quaternion.copy(glbCamera.quaternion);
+    
+    // If it's a perspective camera, also copy FOV and other properties
+    if (glbCamera instanceof THREE.PerspectiveCamera) {
+      camera.fov = glbCamera.fov;
+      camera.near = glbCamera.near;
+      camera.far = glbCamera.far;
+      camera.updateProjectionMatrix();
+      console.log('  - FOV:', glbCamera.fov);
+      console.log('  - Near/Far:', glbCamera.near, '/', glbCamera.far);
+    }
+    
+    // Update orbit controls target to look at the right place
+    // We can estimate the target by projecting forward from the camera
+    const direction = new THREE.Vector3(0, 0, -1);
+    direction.applyQuaternion(camera.quaternion);
+    const distance = 5; // Adjust this based on your scene
+    controls.target.copy(camera.position).add(direction.multiplyScalar(distance));
+    controls.update();
+    
+    console.log('✓ Camera position and orientation applied from GLB');
+    console.log('  - Controls target:', controls.target.toArray());
+  } else {
+    console.warn('⚠️ No camera found in GLB, using default camera setup');
+  }
+  
+  // Find character root from character GLB
+  console.log('\n🔍 Identifying character root...');
+  let skinnedMeshes: THREE.SkinnedMesh[] = [];
+  charGltf.scene.traverse((obj: THREE.Object3D) => {
+    if (obj instanceof THREE.SkinnedMesh) {
+      skinnedMeshes.push(obj);
+    }
+  });
+  
+  console.log(`  - Found ${skinnedMeshes.length} SkinnedMesh(es)`);
+    
+  if (skinnedMeshes.length > 0) {
+    // Character root is the charGltf.scene
+    characterRoot = charGltf.scene;
+    currentCharacterRoot = charGltf.scene;
+    console.log('  ✓ Character root identified');
+  } else {
+    console.error('❌ No SkinnedMesh found in character GLB!');
+  }
+  
+  // Find environment root from scene GLB
+  sceneGltf.scene.traverse((obj: THREE.Object3D) => {
+    if (!environmentRoot) {
+      const envPatterns = ['ENV', 'Environment', 'Sea_Pod', 'Office'];
+      const matchesEnv = envPatterns.some(pattern => obj.name.includes(pattern));
+      if (matchesEnv) {
+        environmentRoot = obj;
+      }
+    }
+  });
+  
+  if (environmentRoot) {
+    console.log('  ✓ Environment root found:', environmentRoot.name);
+  }
+  
+  // Combine animations from both GLBs
+  const allClips = [...sceneGltf.animations, ...charGltf.animations];
+  console.log(`\n🎬 Total animation clips: ${allClips.length}`);
+  
+  if (currentCharacterRoot && allClips.length > 0) {
+    // Create animation mixer
+    setupAnimationMixer(currentCharacterRoot, allClips);
+    
+    // Auto-play first animation
+    if (allClips.length > 0) {
+      playAnimation(currentCharacterRoot, allClips[0].name, true);
+      console.log(`  ✓ Playing: "${allClips[0].name}"`);
+    }
+  }
+  
+  // Process all objects: enable shadows and adjust materials/lights
+  [sceneGltf.scene, charGltf.scene].forEach(root => {
+    root.traverse((obj: THREE.Object3D) => {
+      if (obj instanceof THREE.Mesh) {
+        obj.castShadow = true;
+        obj.receiveShadow = true;
+        const m = (obj as any).material;
+        if (m && m.map) m.map.colorSpace = THREE.SRGBColorSpace;
+        
+        // Extract skydome color for hemisphere light
+        if (obj.name === 'Skydome' && m) {
+          const skyColor = m.emissive || m.color;
+          if (skyColor) {
+            ambientFill.color.copy(skyColor);
+          }
+        }
+      }
+      
+      // Adjust directional light intensity from GLB
+      if (obj instanceof THREE.DirectionalLight) {
+        obj.intensity = obj.intensity / 2000; // 2000x reduction for softer shadows
+        obj.castShadow = true;
+        
+        // Adaptive shadow quality based on device
+        const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+        const shadowMapSize = isMobile ? 1024 : 2048;
+        
+        obj.shadow.mapSize.width = shadowMapSize;
+        obj.shadow.mapSize.height = shadowMapSize;
+        obj.shadow.camera.near = 0.1;
+        obj.shadow.camera.far = 16;
+        obj.shadow.camera.left = -8;
+        obj.shadow.camera.right = 8;
+        obj.shadow.camera.top = 8;
+        obj.shadow.camera.bottom = -8;
+        obj.shadow.bias = -0.0001;
+        obj.shadow.normalBias = 0.02;
+      }
+    });
+  });
+  
+  // Debug: Inspect character structure
+  if (currentCharacterRoot) {
+    console.log('🔍 Character structure analysis:');
+    let hasSkeleton = false;
+    let meshCount = 0;
+    let skinnedMeshCount = 0;
+    let totalBones = 0;
+    
+    currentCharacterRoot.traverse((obj: THREE.Object3D) => {
+      if (obj instanceof THREE.SkinnedMesh) {
+        skinnedMeshCount++;
+        hasSkeleton = true;
+        totalBones = obj.skeleton?.bones.length || 0;
+        console.log('  ✓ SkinnedMesh found:', obj.name);
+        console.log('    - Bones:', totalBones);
+        console.log('    - Vertices:', obj.geometry.attributes.position.count);
+        console.log('    - Bone Texture:', !!obj.skeleton.boneTexture);
+      } else if (obj instanceof THREE.Mesh) {
+        meshCount++;
+      }
+    });
+    
+    console.log(`  Summary: ${skinnedMeshCount} skinned mesh(es), ${meshCount} regular mesh(es), ${totalBones} bones`);
+    console.log(`  Has skeleton: ${hasSkeleton}`);
   }
   
   // Create UI controls after loading
   createUI(allClips);
   
-  console.log('All models loaded successfully');
+  console.log('✅ Scene loaded successfully');
 }
 loadAll().catch(err => {
   console.error('Error loading models:', err);
