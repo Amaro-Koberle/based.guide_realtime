@@ -658,45 +658,36 @@ async function loadAll(): Promise<void> {
   let charRotation = new THREE.Quaternion();
   let charScale = new THREE.Vector3(1, 1, 1);
   
-  console.log('\n📍 Looking for character position in scene...');
+  console.log('\n📍 Looking for character mount point in scene...');
   
-  // First, let's see what objects are actually in the scene
-  const sceneObjects: Array<{name: string, type: string, position: THREE.Vector3}> = [];
+  // Look for CHAR_Mount empty to position character
+  let foundMount = false;
   sceneGltf.scene.traverse((obj: THREE.Object3D) => {
-    if (obj.name && obj !== sceneGltf.scene) {
-      sceneObjects.push({
-        name: obj.name,
-        type: obj.type,
-        position: obj.position.clone()
-      });
-    }
-    
-    // Look for armature or any object with character name
-    if (obj.name && (obj.name.includes('MrProBonobo') || obj.name.includes('Armature'))) {
+    // Look for CHAR_Mount empty (or similar naming patterns)
+    if (obj.name && (obj.name.includes('CHAR_Mount') || obj.name.includes('CHAR_Position'))) {
       obj.getWorldPosition(charPosition);
       obj.getWorldQuaternion(charRotation);
       obj.getWorldScale(charScale);
-      console.log(`  ✓ Found character reference: "${obj.name}" (type: ${obj.type})`);
+      console.log(`  ✓ Found mount point: "${obj.name}"`);
       console.log(`    - Position: (${charPosition.x.toFixed(2)}, ${charPosition.y.toFixed(2)}, ${charPosition.z.toFixed(2)})`);
       console.log(`    - Rotation: (${charRotation.x.toFixed(3)}, ${charRotation.y.toFixed(3)}, ${charRotation.z.toFixed(3)}, ${charRotation.w.toFixed(3)})`);
       
-      // Hide this object from the scene GLB (we'll use the one from char GLB)
+      // Hide the empty (we don't need to render it)
       obj.visible = false;
+      foundMount = true;
+    }
+    
+    // Also hide any character armature/mesh from scene GLB (we'll use the one from char GLB)
+    if (obj.name && (obj.name.includes('MrProBonobo') || obj.name.includes('Armature_MrProBonobo'))) {
+      obj.visible = false;
+      console.log(`  - Hiding duplicate character object from scene: "${obj.name}"`);
     }
   });
   
-  // Log all scene objects for debugging
-  console.log(`  - Scene contains ${sceneObjects.length} named objects`);
-  const relevantObjects = sceneObjects.filter(o => 
-    o.name.includes('MrProBonobo') || 
-    o.name.includes('Armature') || 
-    o.name.includes('CHAR')
-  );
-  if (relevantObjects.length > 0) {
-    console.log('  - Character-related objects:', relevantObjects.map(o => `${o.name} (${o.type})`));
-  } else {
-    console.warn('  ⚠️ No character-related objects found in scene GLB');
-    console.log('  - Sample objects:', sceneObjects.slice(0, 10).map(o => `${o.name} (${o.type})`));
+  if (!foundMount) {
+    console.warn('  ⚠️ No CHAR_Mount found in scene GLB');
+    console.log('  💡 Character will be placed at world origin (0, 0, 0)');
+    console.log('  💡 TIP: Add an Empty named "CHAR_Mount" in your Blender scene to set character position');
   }
   
   // Add character to scene with the position from RT_SCENE
