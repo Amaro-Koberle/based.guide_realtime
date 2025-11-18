@@ -67,9 +67,10 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.5; // Boost exposure to brighten emissive materials
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x111111);
+scene.background = new THREE.Color(0x111111); // Will be updated when skydome loads
 
 const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 2000);
 camera.position.set(4, 3, 6);
@@ -669,21 +670,27 @@ function createUI(clips: THREE.AnimationClip[]): void {
 }
 
 async function loadAll(): Promise<void> {
-  console.log('🎬 Loading scene and character...');
+  console.log('🎬 Loading scene components...');
   
-  // Load scene (environment, camera, backdrop)
-  console.log('  📦 Loading scene GLB...');
-  const sceneGltf = await gltf.loadAsync('/RT_SCENE_ApeEscape.glb');
-  console.log(`    ✓ Scene loaded (${sceneGltf.scenes[0].children.length} root objects)`);
+  // Load environment from ENV_MASTER
+  console.log('  🏢 Loading environment GLB...');
+  const envGltf = await gltf.loadAsync('/ENV_ApeEscapeOffice.glb');
+  console.log(`    ✓ Environment loaded (${envGltf.scenes[0].children.length} root objects)`);
   
-  // Load character separately
+  // Load character from CHAR_MASTER
   console.log('  🦍 Loading character GLB...');
   const charGltf = await gltf.loadAsync('/CHAR_MrProBonobo.glb');
   console.log(`    ✓ Character loaded (${charGltf.animations.length} animations)`);
   
-  // Store the root scene
-  sceneRoot = sceneGltf.scene;
+  // Load scene (camera + animations) from RT_ANIM
+  console.log('  📷 Loading scene GLB (camera + animations)...');
+  const sceneGltf = await gltf.loadAsync('/RT_SCENE_ApeEscape.glb');
+  console.log(`    ✓ Scene loaded (${sceneGltf.animations.length} animation clips)`);
+  
+  // Add environment to scene
+  sceneRoot = envGltf.scene;
   scene.add(sceneRoot);
+  console.log(`  → Environment root at: (${sceneRoot.position.x.toFixed(3)}, ${sceneRoot.position.y.toFixed(3)}, ${sceneRoot.position.z.toFixed(3)})`);
   
   // Find character's intended position from RT_SCENE
   // (The RT_SCENE file has the character positioned on the chair)
@@ -691,100 +698,69 @@ async function loadAll(): Promise<void> {
   let charRotation = new THREE.Quaternion();
   let charScale = new THREE.Vector3(1, 1, 1);
   
-  console.log('\n📍 Looking for character mount point in scene...');
+  console.log('\n📍 Positioning character...');
   
-  // Look for CHAR_MOUNT_ empty to position character
-  // Naming convention: CHAR_MOUNT_<location>_<object> (e.g., CHAR_MOUNT_Office_Chair)
-  let foundMount = false;
-  const allMounts: string[] = [];
-  
+  // First, try to find character armature position from RT_SCENE GLB
+  let foundArmaturePosition = false;
   sceneGltf.scene.traverse((obj: THREE.Object3D) => {
-    // Collect all mount points for logging
-    if (obj.name && obj.name.startsWith('CHAR_MOUNT_')) {
-      allMounts.push(obj.name);
-    }
-    
-    // Look for CHAR_MOUNT_ empties (new naming convention) or legacy CHAR_Mount/CHAR_Position
-    if (obj.name && (obj.name.startsWith('CHAR_MOUNT_') || obj.name.includes('CHAR_Mount') || obj.name.includes('CHAR_Position'))) {
+    if (obj.name && obj.name.includes('Armature_MrProBonobo') && !foundArmaturePosition) {
       obj.getWorldPosition(charPosition);
       obj.getWorldQuaternion(charRotation);
       obj.getWorldScale(charScale);
-      console.log(`  ✓ Found mount point: "${obj.name}"`);
-      console.log(`    - Position: (${charPosition.x.toFixed(2)}, ${charPosition.y.toFixed(2)}, ${charPosition.z.toFixed(2)})`);
-      console.log(`    - Rotation: (${charRotation.x.toFixed(3)}, ${charRotation.y.toFixed(3)}, ${charRotation.z.toFixed(3)}, ${charRotation.w.toFixed(3)})`);
-      
-      // Hide the empty (we don't need to render it)
-      obj.visible = false;
-      foundMount = true;
-    }
-    
-    // Also hide any character armature/mesh from scene GLB (we'll use the one from char GLB)
-    if (obj.name && (obj.name.includes('MrProBonobo') || obj.name.includes('Armature_MrProBonobo'))) {
-      obj.visible = false;
-      console.log(`  - Hiding duplicate character object from scene: "${obj.name}"`);
+      foundArmaturePosition = true;
+      console.log(`  ✓ Using character armature position from RT_SCENE`);
+      console.log(`    Position: (${charPosition.x.toFixed(2)}, ${charPosition.y.toFixed(2)}, ${charPosition.z.toFixed(2)})`);
     }
   });
   
-  if (allMounts.length > 1) {
-    console.log(`  ℹ️ Found ${allMounts.length} mount points:`, allMounts);
-    console.log(`  - Using first found: "${allMounts[0]}"`);
+  // Fallback: use office chair position if no armature found
+  if (!foundArmaturePosition) {
+    envGltf.scene.traverse((obj: THREE.Object3D) => {
+      if (obj.name && obj.name.includes('Office_Chair_Instance')) {
+        // Get both local and world positions to see if there's a parent offset
+        const localPos = obj.position.clone();
+        obj.getWorldPosition(charPosition);
+        obj.getWorldQuaternion(charRotation);
+        obj.getWorldScale(charScale);
+        console.log(`  ✓ Using office chair position (no armature in RT_SCENE)`);
+        console.log(`    Chair local: (${localPos.x.toFixed(2)}, ${localPos.y.toFixed(2)}, ${localPos.z.toFixed(2)})`);
+        console.log(`    Chair world: (${charPosition.x.toFixed(2)}, ${charPosition.y.toFixed(2)}, ${charPosition.z.toFixed(2)})`);
+        
+        // Also check if the chair's parent has an offset
+        if (obj.parent && obj.parent !== envGltf.scene) {
+          const parentWorldPos = new THREE.Vector3();
+          obj.parent.getWorldPosition(parentWorldPos);
+          console.log(`    Parent world: (${parentWorldPos.x.toFixed(2)}, ${parentWorldPos.y.toFixed(2)}, ${parentWorldPos.z.toFixed(2)})`);
+        }
+      }
+    });
   }
   
-  if (!foundMount) {
-    console.warn('  ⚠️ No CHAR_MOUNT_ empty found in scene GLB');
-    console.log('  💡 Character will be placed at world origin (0, 0, 0)');
-    console.log('  💡 TIP: Add an Empty named "CHAR_MOUNT_<location>" in your Blender scene');
-  }
-  
-  // Add character to scene with the position from RT_SCENE
+  // Add character to scene
   charGltf.scene.position.copy(charPosition);
   charGltf.scene.quaternion.copy(charRotation);
   charGltf.scene.scale.copy(charScale);
   scene.add(charGltf.scene);
-  console.log('    ✓ Character added to scene at RT_SCENE position');
+  console.log(`  → Character placed at Y: ${charGltf.scene.position.y.toFixed(3)}m`);
   
   // Find and extract camera from the GLB
+  console.log('\n📷 Setting up camera...');
   let glbCamera: THREE.Camera | null = null;
-  console.log('\n📷 Searching for camera...');
   
-  // First, check the cameras array directly (more reliable)
   if (sceneGltf.cameras && sceneGltf.cameras.length > 0) {
-    console.log(`  - Found ${sceneGltf.cameras.length} camera(s) in GLB cameras array`);
     glbCamera = sceneGltf.cameras[0];
-    console.log(`  - Using camera: "${glbCamera.name}" (type: ${glbCamera.type})`);
     
-    // Camera in the cameras array might not have world position yet
-    // We need to find it in the scene to get its transform
+    // Find camera in scene hierarchy to get its transform
     sceneGltf.scene.traverse((obj: THREE.Object3D) => {
       if (obj instanceof THREE.Camera && obj.uuid === glbCamera!.uuid) {
         glbCamera = obj;
-        console.log('    ✓ Found camera in scene hierarchy with transforms');
       }
     });
-    
-    // Log camera properties
-    if (glbCamera) {
-      console.log('    - Position:', glbCamera.position.toArray());
-      console.log('    - Rotation (euler):', glbCamera.rotation.toArray());
-      console.log('    - Quaternion:', glbCamera.quaternion.toArray());
-      // Get world position in case camera is nested
-      const worldPos = new THREE.Vector3();
-      glbCamera.getWorldPosition(worldPos);
-      console.log('    - World Position:', worldPos.toArray());
-    }
   } else {
     // Fallback: search in scene hierarchy
-    console.log('  - No cameras in cameras array, searching scene hierarchy...');
     sceneGltf.scene.traverse((obj: THREE.Object3D) => {
-      if (obj instanceof THREE.Camera) {
-        console.log(`  - Found camera: "${obj.name}" (type: ${obj.type})`);
-        if (!glbCamera) {
-          glbCamera = obj;
-          console.log('    ✓ Using this camera');
-          console.log('    - Position:', obj.position.toArray());
-          console.log('    - Rotation (euler):', obj.rotation.toArray());
-          console.log('    - Quaternion:', obj.quaternion.toArray());
-        }
+      if (obj instanceof THREE.Camera && !glbCamera) {
+        glbCamera = obj;
       }
     });
   }
@@ -811,35 +787,37 @@ async function loadAll(): Promise<void> {
       camera.near = glbCamera.near;
       camera.far = glbCamera.far;
       camera.updateProjectionMatrix();
-      console.log('  - FOV:', glbCamera.fov);
-      console.log('  - Near/Far:', glbCamera.near, '/', glbCamera.far);
     }
     
-    console.log('✓ Camera position and orientation applied from GLB');
-    console.log('  - Camera will follow mouse movement with fixed position');
-    console.log('  - Look-at target:', originalLookAtTarget.toArray());
+    console.log('  ✓ Camera configured from GLB');
   } else {
-    console.warn('⚠️ No camera found in GLB, using default camera setup');
+    console.warn('  ⚠️ No camera found in GLB, using default');
   }
   
-  // Find character root from character GLB
-  console.log('\n🔍 Identifying character root...');
+  // Find character skeleton and check for mesh offsets
   let skinnedMeshes: THREE.SkinnedMesh[] = [];
   charGltf.scene.traverse((obj: THREE.Object3D) => {
     if (obj instanceof THREE.SkinnedMesh) {
       skinnedMeshes.push(obj);
+      // Check if mesh has a local position offset
+      console.log(`\n🔍 Character mesh "${obj.name}" local position: (${obj.position.x.toFixed(3)}, ${obj.position.y.toFixed(3)}, ${obj.position.z.toFixed(3)})`);
+      
+      // Check parent hierarchy
+      let parent = obj.parent;
+      let depth = 0;
+      while (parent && depth < 3) {
+        console.log(`  Parent ${depth}: "${parent.name}" at (${parent.position.x.toFixed(3)}, ${parent.position.y.toFixed(3)}, ${parent.position.z.toFixed(3)})`);
+        parent = parent.parent;
+        depth++;
+      }
     }
   });
-  
-  console.log(`  - Found ${skinnedMeshes.length} SkinnedMesh(es)`);
     
   if (skinnedMeshes.length > 0) {
-    // Character root is the charGltf.scene
     characterRoot = charGltf.scene;
     currentCharacterRoot = charGltf.scene;
-    console.log('  ✓ Character root identified');
   } else {
-    console.error('❌ No SkinnedMesh found in character GLB!');
+    console.error('❌ No character skeleton found!');
   }
   
   // Find environment root from scene GLB
@@ -859,7 +837,19 @@ async function loadAll(): Promise<void> {
   
   // Combine animations from both GLBs
   const allClips = [...sceneGltf.animations, ...charGltf.animations];
-  console.log(`\n🎬 Total animation clips: ${allClips.length}`);
+  console.log(`\n🎬 Animations: ${allClips.length} clips loaded`);
+  
+  // Check ROOT bone values in animation
+  allClips.forEach(clip => {
+    const rootTrack = clip.tracks.find(track => track.name === 'ROOT.position');
+    if (rootTrack && rootTrack.values) {
+      // Log the Y value (index 1) of the first keyframe
+      const firstY = rootTrack.values[1];
+      if (Math.abs(firstY) > 0.01) {
+        console.log(`  ⚠️ ROOT Y offset in "${clip.name}": ${firstY.toFixed(3)}m`);
+      }
+    }
+  });
   
   if (currentCharacterRoot && allClips.length > 0) {
     // Create animation mixer
@@ -868,12 +858,15 @@ async function loadAll(): Promise<void> {
     // Auto-play first animation
     if (allClips.length > 0) {
       playAnimation(currentCharacterRoot, allClips[0].name, true);
-      console.log(`  ✓ Playing: "${allClips[0].name}"`);
+      console.log(`  ✓ Playing "${allClips[0].name}"`);
     }
   }
   
   // Process all objects: enable shadows and adjust materials/lights
-  [sceneGltf.scene, charGltf.scene].forEach(root => {
+  console.log('\n🎨 Processing materials and lights...');
+  let skydomeFound = false;
+  
+  [envGltf.scene, charGltf.scene].forEach(root => {
     root.traverse((obj: THREE.Object3D) => {
       if (obj instanceof THREE.Mesh) {
         obj.castShadow = true;
@@ -881,12 +874,37 @@ async function loadAll(): Promise<void> {
         const m = (obj as any).material;
         if (m && m.map) m.map.colorSpace = THREE.SRGBColorSpace;
         
-        // Extract skydome color for hemisphere light
-        if (obj.name === 'Skydome' && m) {
-          const skyColor = m.emissive || m.color;
-          if (skyColor) {
-            ambientFill.color.copy(skyColor);
+        // Handle skydome and ocean backdrop materials
+        if ((obj.name === 'Skydome' || obj.name === 'Ocean') && m) {
+          // For skydome, replace with unlit material
+          if (obj.name === 'Skydome') {
+            const skydomeMaterial = new THREE.MeshBasicMaterial({
+              color: m.emissive.clone(),
+              side: THREE.BackSide,
+              fog: false,
+              depthWrite: false,
+            });
+            obj.material = skydomeMaterial;
+            obj.renderOrder = -1;
+            obj.frustumCulled = false;
+            
+            // Set scene background to sky color
+            ambientFill.color.copy(m.emissive);
+            scene.background = m.emissive.clone();
+            console.log(`  ✓ Skydome configured (background: #${m.emissive.getHexString()})`);
+            skydomeFound = true;
+          } else if (obj.name === 'Ocean') {
+            // Ocean: boost emissive and disable culling
+            if (m.emissive && m.emissive.r === 0 && m.emissive.g === 0 && m.emissive.b === 0) {
+              m.emissive.copy(m.color);
+            }
+            m.emissiveIntensity = 20;
+            obj.frustumCulled = false;
+            console.log(`  ✓ Ocean configured (emissive boosted)`);
           }
+          
+          // Don't cast shadows from backdrop
+          obj.castShadow = false;
         }
       }
       
@@ -913,9 +931,12 @@ async function loadAll(): Promise<void> {
     });
   });
   
-  // Debug: Inspect character structure
+  if (!skydomeFound) {
+    console.warn('  ⚠️ Skydome not found - using default hemisphere light color');
+  }
+  
+  // Verify character structure
   if (currentCharacterRoot) {
-    console.log('🔍 Character structure analysis:');
     let hasSkeleton = false;
     let meshCount = 0;
     let skinnedMeshCount = 0;
@@ -926,23 +947,26 @@ async function loadAll(): Promise<void> {
         skinnedMeshCount++;
         hasSkeleton = true;
         totalBones = obj.skeleton?.bones.length || 0;
-        console.log('  ✓ SkinnedMesh found:', obj.name);
-        console.log('    - Bones:', totalBones);
-        console.log('    - Vertices:', obj.geometry.attributes.position.count);
-        console.log('    - Bone Texture:', !!obj.skeleton.boneTexture);
+        // Character skeleton verified
       } else if (obj instanceof THREE.Mesh) {
         meshCount++;
       }
     });
     
-    console.log(`  Summary: ${skinnedMeshCount} skinned mesh(es), ${meshCount} regular mesh(es), ${totalBones} bones`);
-    console.log(`  Has skeleton: ${hasSkeleton}`);
+    if (!hasSkeleton) {
+      console.warn('  ⚠️ Character has no skeleton - animations may not work');
+    }
   }
   
   // Create UI controls after loading
   createUI(allClips);
   
-  console.log('✅ Scene loaded successfully');
+  // Final position check
+  console.log('\n📊 Final position check:');
+  console.log(`  Environment Y: ${sceneRoot?.position.y.toFixed(3)}m`);
+  console.log(`  Character Y: ${charGltf.scene.position.y.toFixed(3)}m`);
+  
+  console.log('\n✅ Scene loaded successfully');
 }
 loadAll().catch(err => {
   console.error('Error loading models:', err);

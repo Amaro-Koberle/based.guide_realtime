@@ -1,13 +1,13 @@
 #!/bin/bash
 
-# RT_SCENE GLB Export Script
-# Exports character and scene as separate GLBs
+# GLB Export Script
+# Exports character, environment, and scene (camera + animations) as separate GLBs
 
 echo ""
 echo "🎬 Exporting GLBs..."
 echo ""
 
-# Export character first
+# --- Export Character ---
 echo "📦 Exporting character..."
 /Applications/Blender.app/Contents/MacOS/Blender --background --python export_char.py 2>&1 | \
   grep -v "WARNING: Animation target" | \
@@ -23,13 +23,28 @@ echo "📦 Exporting character..."
 
 if [ $? -ne 0 ]; then
     echo ""
-    echo "❌ Character export failed. Check the output above for errors."
-    echo ""
+    echo "❌ Character export failed."
     exit 1
 fi
 
+# --- Export Environment ---
 echo ""
-echo "🏢 Exporting scene..."
+echo "🏢 Exporting environment..."
+/Applications/Blender.app/Contents/MacOS/Blender --background --python export_env.py 2>&1 | \
+  grep -v "INFO: Extracting primitive" | \
+  grep -v "INFO: Primitives created" | \
+  grep -v "Error: Tangent space" | \
+  grep -v "Could not calculate tangents"
+
+if [ $? -ne 0 ]; then
+    echo ""
+    echo "❌ Environment export failed."
+    exit 1
+fi
+
+# --- Export Scene (Camera + Animations) ---
+echo ""
+echo "🎬 Exporting scene (camera + animations)..."
 /Applications/Blender.app/Contents/MacOS/Blender --background --python export_rt_scene.py 2>&1 | \
   grep -v "WARNING: Animation target" | \
   grep -v "WARNING: Baking animation" | \
@@ -44,11 +59,10 @@ echo "🏢 Exporting scene..."
 
 if [ $? -eq 0 ]; then
     echo ""
-    echo "✅ Export complete! Refresh your browser to see changes."
+    echo "✅ All exports complete! Refresh your browser to see changes."
     echo ""
 else
     echo ""
-    echo "❌ Scene export failed. Check the output above for errors."
-    echo ""
+    echo "❌ Scene export failed."
     exit 1
 fi
