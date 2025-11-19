@@ -191,6 +191,10 @@ const ambientFill = new THREE.HemisphereLight(
 );
 scene.add(ambientFill);
 
+// Additional ambient light to brighten dark areas (ceilings, under objects)
+const ambientLight = new THREE.AmbientLight(0xffffff, 0.3);
+scene.add(ambientLight);
+
 const gltf = new GLTFLoader();
 const ktx2 = new KTX2Loader()
   .setTranscoderPath('https://unpkg.com/three/examples/jsm/libs/basis/')
@@ -686,8 +690,35 @@ function createUI(_clips: THREE.AnimationClip[]): void {
     }));
   }
   
+  // Directional Light (sun)
+  const dirLightLabel = document.createElement('div');
+  dirLightLabel.textContent = '☀️ Sun Light';
+  dirLightLabel.style.cssText = `
+    font-weight: bold;
+    font-size: 10px;
+    margin-top: 4px;
+    margin-bottom: 4px;
+    opacity: 0.7;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    padding-top: 8px;
+  `;
+  lightSection.content.appendChild(dirLightLabel);
+  
   // Hemisphere Light Intensity
-  lightSection.content.appendChild(createSlider('Ambient', 0, 5, 
+  const hemiLightLabel = document.createElement('div');
+  hemiLightLabel.textContent = '🌍 Hemisphere (Sky/Ground)';
+  hemiLightLabel.style.cssText = `
+    font-weight: bold;
+    font-size: 10px;
+    margin-top: 8px;
+    margin-bottom: 4px;
+    opacity: 0.7;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    padding-top: 8px;
+  `;
+  lightSection.content.appendChild(hemiLightLabel);
+  
+  lightSection.content.appendChild(createSlider('Hemisphere', 0, 5, 
     ambientFill.intensity, 0.1, (val) => {
       ambientFill.intensity = val;
     }
@@ -703,24 +734,96 @@ function createUI(_clips: THREE.AnimationClip[]): void {
     ambientFill.groundColor.copy(color);
   }));
   
+  // Ambient Light (fills all shadows equally)
+  const ambientLightLabel = document.createElement('div');
+  ambientLightLabel.textContent = '💡 Ambient (Fill Light)';
+  ambientLightLabel.style.cssText = `
+    font-weight: bold;
+    font-size: 10px;
+    margin-top: 8px;
+    margin-bottom: 4px;
+    opacity: 0.7;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    padding-top: 8px;
+  `;
+  lightSection.content.appendChild(ambientLightLabel);
+  
+  lightSection.content.appendChild(createSlider('Fill Light', 0, 3, 
+    ambientLight.intensity, 0.1, (val) => {
+      ambientLight.intensity = val;
+    }
+  ));
+  
+  lightSection.content.appendChild(createColorPicker('Fill Color', ambientLight.color, (color) => {
+    ambientLight.color.copy(color);
+  }));
+  
+  // Rendering
+  const renderLabel = document.createElement('div');
+  renderLabel.textContent = '🎨 Rendering';
+  renderLabel.style.cssText = `
+    font-weight: bold;
+    font-size: 10px;
+    margin-top: 8px;
+    margin-bottom: 4px;
+    opacity: 0.7;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    padding-top: 8px;
+  `;
+  lightSection.content.appendChild(renderLabel);
+  
   // Tone Mapping Exposure
-  lightSection.content.appendChild(createSlider('Exposure', 0.1, 3, 
+  lightSection.content.appendChild(createSlider('Exposure', 0.1, 5, 
     renderer.toneMappingExposure, 0.1, (val) => {
       renderer.toneMappingExposure = val;
     }
   ));
   
   // Shadow controls
-  lightSection.content.appendChild(createCheckbox('Shadows', renderer.shadowMap.enabled, (checked) => {
+  const shadowLabel = document.createElement('div');
+  shadowLabel.textContent = '🌑 Shadows';
+  shadowLabel.style.cssText = `
+    font-weight: bold;
+    font-size: 10px;
+    margin-top: 8px;
+    margin-bottom: 4px;
+    opacity: 0.7;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    padding-top: 8px;
+  `;
+  lightSection.content.appendChild(shadowLabel);
+  
+  lightSection.content.appendChild(createCheckbox('Enable Shadows', renderer.shadowMap.enabled, (checked) => {
     renderer.shadowMap.enabled = checked;
     if (directionalLight) directionalLight.castShadow = checked;
   }));
   
-  // Shadow bias (fixes shadow acne / dark shadows)
+  // Shadow bias (fixes shadow acne)
   if (directionalLight) {
     lightSection.content.appendChild(createSlider('Shadow Bias', -0.01, 0.01, 
       directionalLight.shadow.bias, 0.0001, (val) => {
         if (directionalLight) directionalLight.shadow.bias = val;
+      }
+    ));
+    
+    // Shadow darkness/opacity
+    lightSection.content.appendChild(createSlider('Shadow Opacity', 0, 1, 
+      0.5, 0.05, (val) => {
+        // This is a bit hacky but works - we'll adjust all materials' shadow darkness
+        // by modifying the shadow camera's intensity indirectly through materials
+        scene.traverse((obj) => {
+          if (obj instanceof THREE.Mesh && obj.receiveShadow) {
+            if (obj.material instanceof THREE.Material) {
+              // Store original color if not already stored
+              if (!(obj.material as any)._originalColor) {
+                (obj.material as any)._originalColor = (obj.material as any).color?.clone();
+              }
+            }
+          }
+        });
+        // Instead, let's adjust the ambient light to simulate shadow lightening
+        const shadowFillAmount = 1 - val; // Invert: 0 = dark shadows, 1 = light shadows
+        ambientLight.intensity = Math.max(0.3, shadowFillAmount * 1.5);
       }
     ));
   }
