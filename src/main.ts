@@ -54,6 +54,9 @@ let sceneRoot: THREE.Group | null = null;
 let characterRoot: THREE.Object3D | null = null;
 let environmentRoot: THREE.Object3D | null = null;
 
+// Light references for debug controls
+let directionalLight: THREE.DirectionalLight | null = null;
+
 const canvas = document.getElementById('c') as HTMLCanvasElement;
 const renderer = new THREE.WebGLRenderer({ 
   canvas, 
@@ -402,7 +405,7 @@ function createUI(_clips: THREE.AnimationClip[]): void {
   `;
   
   const title = document.createElement('span');
-  title.textContent = '⚙️ Debug Controls';
+  title.textContent = '🛠️ Dev Panel';
   
   const toggleIcon = document.createElement('span');
   toggleIcon.textContent = '▼';
@@ -497,6 +500,191 @@ function createUI(_clips: THREE.AnimationClip[]): void {
   fpsLabel.appendChild(fpsSlider);
   fpsControl.appendChild(fpsLabel);
   content.appendChild(fpsControl);
+  
+  // ========== LIGHTING CONTROLS ==========
+  const lightingSection = document.createElement('div');
+  lightingSection.style.cssText = `
+    margin-bottom: 12px;
+    padding: 8px;
+    background: rgba(80, 60, 40, 0.3);
+    border: 1px solid rgba(255, 180, 100, 0.3);
+    border-radius: 4px;
+  `;
+  
+  const lightingTitle = document.createElement('div');
+  lightingTitle.textContent = '💡 Lighting';
+  lightingTitle.style.cssText = `
+    font-weight: bold;
+    margin-bottom: 8px;
+    font-size: 11px;
+    color: #ffb464;
+  `;
+  lightingSection.appendChild(lightingTitle);
+  
+  // Helper function to create a slider control
+  function createSlider(label: string, min: number, max: number, value: number, step: number, onChange: (value: number) => void) {
+    const container = document.createElement('div');
+    container.style.cssText = `
+      margin-bottom: 8px;
+    `;
+    
+    const labelEl = document.createElement('label');
+    labelEl.style.cssText = `
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    `;
+    
+    const textEl = document.createElement('span');
+    textEl.textContent = `${label}: ${value.toFixed(2)}`;
+    textEl.style.cssText = `
+      font-size: 10px;
+      opacity: 0.9;
+    `;
+    
+    const slider = document.createElement('input');
+    slider.type = 'range';
+    slider.min = min.toString();
+    slider.max = max.toString();
+    slider.value = value.toString();
+    slider.step = step.toString();
+    slider.style.cssText = `
+      width: 100%;
+      cursor: pointer;
+    `;
+    
+    slider.oninput = (e) => {
+      const val = parseFloat((e.target as HTMLInputElement).value);
+      textEl.textContent = `${label}: ${val.toFixed(2)}`;
+      onChange(val);
+    };
+    
+    labelEl.appendChild(textEl);
+    labelEl.appendChild(slider);
+    container.appendChild(labelEl);
+    return container;
+  }
+  
+  // Helper function to create a color picker
+  function createColorPicker(label: string, color: THREE.Color, onChange: (color: THREE.Color) => void) {
+    const container = document.createElement('div');
+    container.style.cssText = `
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    `;
+    
+    const labelEl = document.createElement('span');
+    labelEl.textContent = label;
+    labelEl.style.cssText = `
+      font-size: 10px;
+      opacity: 0.9;
+      flex: 1;
+    `;
+    
+    const colorInput = document.createElement('input');
+    colorInput.type = 'color';
+    colorInput.value = '#' + color.getHexString();
+    colorInput.style.cssText = `
+      width: 40px;
+      height: 24px;
+      cursor: pointer;
+      border: none;
+      border-radius: 4px;
+    `;
+    
+    colorInput.oninput = (e) => {
+      const hex = (e.target as HTMLInputElement).value;
+      color.setStyle(hex);
+      onChange(color);
+    };
+    
+    container.appendChild(labelEl);
+    container.appendChild(colorInput);
+    return container;
+  }
+  
+  // Helper function to create a checkbox
+  function createCheckbox(label: string, checked: boolean, onChange: (checked: boolean) => void) {
+    const container = document.createElement('label');
+    container.style.cssText = `
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 8px;
+      cursor: pointer;
+    `;
+    
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.checked = checked;
+    checkbox.style.cursor = 'pointer';
+    checkbox.onchange = (e) => onChange((e.target as HTMLInputElement).checked);
+    
+    const labelEl = document.createElement('span');
+    labelEl.textContent = label;
+    labelEl.style.fontSize = '10px';
+    
+    container.appendChild(checkbox);
+    container.appendChild(labelEl);
+    return container;
+  }
+  
+  // Directional Light Intensity
+  lightingSection.appendChild(createSlider('Dir Light', 0, 5, 
+    directionalLight?.intensity || 1, 0.1, (val) => {
+      if (directionalLight) directionalLight.intensity = val;
+    }
+  ));
+  
+  // Directional Light Color
+  if (directionalLight) {
+    lightingSection.appendChild(createColorPicker('Dir Color', directionalLight.color, (color) => {
+      if (directionalLight) directionalLight.color.copy(color);
+    }));
+  }
+  
+  // Hemisphere Light Intensity
+  lightingSection.appendChild(createSlider('Ambient', 0, 5, 
+    ambientFill.intensity, 0.1, (val) => {
+      ambientFill.intensity = val;
+    }
+  ));
+  
+  // Hemisphere Sky Color
+  lightingSection.appendChild(createColorPicker('Sky Color', ambientFill.color, (color) => {
+    ambientFill.color.copy(color);
+  }));
+  
+  // Hemisphere Ground Color
+  lightingSection.appendChild(createColorPicker('Ground Color', ambientFill.groundColor, (color) => {
+    ambientFill.groundColor.copy(color);
+  }));
+  
+  // Tone Mapping Exposure
+  lightingSection.appendChild(createSlider('Exposure', 0.1, 3, 
+    renderer.toneMappingExposure, 0.1, (val) => {
+      renderer.toneMappingExposure = val;
+    }
+  ));
+  
+  // Shadow controls
+  lightingSection.appendChild(createCheckbox('Shadows', renderer.shadowMap.enabled, (checked) => {
+    renderer.shadowMap.enabled = checked;
+    if (directionalLight) directionalLight.castShadow = checked;
+  }));
+  
+  // Shadow bias (fixes shadow acne / dark shadows)
+  if (directionalLight) {
+    lightingSection.appendChild(createSlider('Shadow Bias', -0.01, 0.01, 
+      directionalLight.shadow.bias, 0.0001, (val) => {
+        if (directionalLight) directionalLight.shadow.bias = val;
+      }
+    ));
+  }
+  
+  content.appendChild(lightingSection);
   
   // Skeleton toggle
   const skeletonToggle = document.createElement('label');
@@ -811,6 +999,7 @@ async function loadAll(): Promise<void> {
       
       // Adjust directional light intensity from GLB
       if (obj instanceof THREE.DirectionalLight) {
+        directionalLight = obj; // Store reference for debug controls
         obj.intensity = obj.intensity / 2000; // 2000x reduction for softer shadows
         obj.castShadow = true;
         
