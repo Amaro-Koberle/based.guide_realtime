@@ -69,7 +69,7 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.5; // Boost exposure to brighten emissive materials
+renderer.toneMappingExposure = 0.9; // Adjusted exposure for balanced lighting
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x111111); // Will be updated when skydome loads
@@ -186,13 +186,13 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 // Hemisphere light for fake GI - will be updated with skydome color
 const ambientFill = new THREE.HemisphereLight(
   0x87ceeb, // Default sky color (will be replaced with skydome emissive)
-  0x3a2a1f, // Ground color - dark warm tone
+  0xa3a3a3, // Ground color - light gray for better ceiling visibility
   1.2       // Intensity (increased for softer overall lighting)
 );
 scene.add(ambientFill);
 
 // Additional ambient light to brighten dark areas (ceilings, under objects)
-const ambientLight = new THREE.AmbientLight(0xffffff, 0.3);
+const ambientLight = new THREE.AmbientLight(0xffcfa8, 0.7); // Warm peach fill light
 scene.add(ambientLight);
 
 const gltf = new GLTFLoader();
@@ -677,8 +677,8 @@ function createUI(_clips: THREE.AnimationClip[]): void {
   }
   
   // Directional Light Intensity
-  lightSection.content.appendChild(createSlider('Dir Light', 0, 5, 
-    directionalLight?.intensity || 1, 0.1, (val) => {
+  lightSection.content.appendChild(createSlider('Dir Light', 0, 20, 
+    directionalLight?.intensity || 10, 0.1, (val) => {
       if (directionalLight) directionalLight.intensity = val;
     }
   ));
@@ -808,7 +808,7 @@ function createUI(_clips: THREE.AnimationClip[]): void {
     
     // Shadow darkness/opacity
     lightSection.content.appendChild(createSlider('Shadow Opacity', 0, 1, 
-      0.5, 0.05, (val) => {
+      0.3, 0.05, (val) => {
         // This is a bit hacky but works - we'll adjust all materials' shadow darkness
         // by modifying the shadow camera's intensity indirectly through materials
         scene.traverse((obj) => {
@@ -1131,7 +1131,7 @@ async function loadAll(): Promise<void> {
       // Adjust directional light intensity from GLB
       if (obj instanceof THREE.DirectionalLight) {
         directionalLight = obj; // Store reference for debug controls
-        obj.intensity = obj.intensity / 2000; // 2000x reduction for softer shadows
+        obj.intensity = 10; // Set to default value of 10
         obj.castShadow = true;
         
         // Adaptive shadow quality based on device
