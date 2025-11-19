@@ -47,6 +47,7 @@ stats.showPanel(0); // 0: fps, 1: ms, 2: mb
 
 // Debug helpers
 let skeletonHelper: THREE.SkeletonHelper | null = null;
+let shadowCameraHelper: THREE.CameraHelper | null = null;
 let currentCharacterRoot: THREE.Object3D | null = null;
 
 // Scene management
@@ -410,6 +411,35 @@ function toggleSkeleton(visible: boolean): void {
     scene.remove(skeletonHelper);
     skeletonHelper = null;
     console.log('✓ Skeleton helper hidden');
+  }
+}
+
+function toggleShadowCamera(visible: boolean): void {
+  if (!directionalLight) {
+    console.warn('No directional light loaded');
+    return;
+  }
+  
+  if (visible) {
+    // Create shadow camera helper if it doesn't exist
+    if (!shadowCameraHelper) {
+      shadowCameraHelper = new THREE.CameraHelper(directionalLight.shadow.camera);
+      scene.add(shadowCameraHelper);
+      console.log('✓ Shadow camera helper created');
+    } else {
+      shadowCameraHelper.visible = true;
+      console.log('✓ Shadow camera helper shown');
+    }
+  } else {
+    if (shadowCameraHelper) {
+      shadowCameraHelper.visible = false;
+      console.log('✓ Shadow camera helper hidden');
+    }
+  }
+  
+  // Update the helper if it exists
+  if (shadowCameraHelper) {
+    shadowCameraHelper.update();
   }
 }
 
@@ -936,6 +966,11 @@ function createUI(_clips: THREE.AnimationClip[]): void {
     if (directionalLight) directionalLight.castShadow = checked;
   }));
   
+  // Show shadow camera helper
+  lightSection.content.appendChild(createCheckbox('Show Shadow Camera', false, (checked) => {
+    toggleShadowCamera(checked);
+  }));
+  
   // Shadow bias (fixes shadow acne)
   if (directionalLight) {
     lightSection.content.appendChild(createSlider('Shadow Bias', -0.01, 0.01, 
@@ -962,6 +997,54 @@ function createUI(_clips: THREE.AnimationClip[]): void {
         // Instead, let's adjust the ambient light to simulate shadow lightening
         const shadowFillAmount = 1 - val; // Invert: 0 = dark shadows, 1 = light shadows
         ambientLight.intensity = Math.max(0.3, shadowFillAmount * 1.5);
+      }
+    ));
+    
+    // Shadow Camera Size Controls
+    lightSection.content.appendChild(createSlider('Shadow Cam Width', 1, 50, 
+      16, 0.5, (val) => {
+        if (directionalLight) {
+          directionalLight.shadow.camera.left = -val;
+          directionalLight.shadow.camera.right = val;
+          directionalLight.shadow.camera.updateProjectionMatrix();
+          if (shadowCameraHelper) shadowCameraHelper.update();
+        }
+      }
+    ));
+    
+    lightSection.content.appendChild(createSlider('Shadow Cam Height', 1, 50, 
+      16, 0.5, (val) => {
+        if (directionalLight) {
+          directionalLight.shadow.camera.top = val;
+          directionalLight.shadow.camera.bottom = -val;
+          directionalLight.shadow.camera.updateProjectionMatrix();
+          if (shadowCameraHelper) shadowCameraHelper.update();
+        }
+      }
+    ));
+    
+    lightSection.content.appendChild(createSlider('Shadow Cam Depth', 1, 50, 
+      16, 0.5, (val) => {
+        if (directionalLight) {
+          directionalLight.shadow.camera.far = val;
+          directionalLight.shadow.camera.updateProjectionMatrix();
+          if (shadowCameraHelper) shadowCameraHelper.update();
+        }
+      }
+    ));
+    
+    // Shadow map resolution (power of 2)
+    lightSection.content.appendChild(createSlider('Shadow Resolution', 256, 4096, 
+      2048, 256, (val) => {
+        if (directionalLight) {
+          directionalLight.shadow.mapSize.width = val;
+          directionalLight.shadow.mapSize.height = val;
+          // Need to dispose and recreate shadow map for resolution change
+          if (directionalLight.shadow.map) {
+            directionalLight.shadow.map.dispose();
+            directionalLight.shadow.map = null;
+          }
+        }
       }
     ));
   }
@@ -1059,8 +1142,10 @@ async function loadAll(): Promise<void> {
   
   // Add environment to scene
   sceneRoot = envGltf.scene;
-  scene.add(sceneRoot);
-  console.log(`  → Environment root at: (${sceneRoot.position.x.toFixed(3)}, ${sceneRoot.position.y.toFixed(3)}, ${sceneRoot.position.z.toFixed(3)})`);
+  if (sceneRoot) {
+    scene.add(sceneRoot);
+    console.log(`  → Environment root at: (${sceneRoot.position.x.toFixed(3)}, ${sceneRoot.position.y.toFixed(3)}, ${sceneRoot.position.z.toFixed(3)})`);
+  }
   
   // Find character's intended position from RT_SCENE
   // (The RT_SCENE file has the character positioned on the chair)
@@ -1226,7 +1311,7 @@ async function loadAll(): Promise<void> {
   
   // Check ROOT bone values in animation
   allClips.forEach(clip => {
-    const rootTrack = clip.tracks.find(track => track.name === 'ROOT.position');
+    const rootTrack = clip.tracks.find((track: THREE.KeyframeTrack) => track.name === 'ROOT.position');
     if (rootTrack && rootTrack.values) {
       // Log the Y value (index 1) of the first keyframe
       const firstY = rootTrack.values[1];
