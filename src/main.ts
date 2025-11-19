@@ -424,6 +424,8 @@ function createUI(_clips: THREE.AnimationClip[]): void {
   content.style.cssText = `
     display: none;
     padding: 15px;
+    max-height: 80vh;
+    overflow-y: auto;
   `;
   panel.appendChild(content);
   
@@ -435,11 +437,69 @@ function createUI(_clips: THREE.AnimationClip[]): void {
     toggleIcon.style.transform = isExpanded ? 'rotate(0deg)' : 'rotate(-90deg)';
   };
   
-  // FPS counter display (integrated stats.js) - full width
+  // Helper to create collapsible section
+  function createSection(title: string, color: string) {
+    const section = document.createElement('div');
+    section.style.cssText = `
+      margin-bottom: 8px;
+      background: ${color};
+      border-radius: 4px;
+      overflow: hidden;
+    `;
+    
+    const sectionHeader = document.createElement('div');
+    sectionHeader.style.cssText = `
+      padding: 8px;
+      cursor: pointer;
+      user-select: none;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-weight: bold;
+      font-size: 11px;
+    `;
+    
+    const sectionTitle = document.createElement('span');
+    sectionTitle.textContent = title;
+    
+    const sectionIcon = document.createElement('span');
+    sectionIcon.textContent = '▼';
+    sectionIcon.style.cssText = `
+      font-size: 8px;
+      transition: transform 0.2s;
+    `;
+    
+    sectionHeader.appendChild(sectionTitle);
+    sectionHeader.appendChild(sectionIcon);
+    
+    const sectionContent = document.createElement('div');
+    sectionContent.style.cssText = `
+      padding: 8px;
+      display: block;
+    `;
+    
+    let sectionExpanded = true;
+    sectionHeader.onclick = () => {
+      sectionExpanded = !sectionExpanded;
+      sectionContent.style.display = sectionExpanded ? 'block' : 'none';
+      sectionIcon.style.transform = sectionExpanded ? 'rotate(0deg)' : 'rotate(-90deg)';
+    };
+    
+    section.appendChild(sectionHeader);
+    section.appendChild(sectionContent);
+    
+    return { section, content: sectionContent };
+  }
+  
+  // ========== PERFORMANCE SECTION ==========
+  const perfSection = createSection('⚡ Performance', 'rgba(0, 100, 200, 0.2)');
+  content.appendChild(perfSection.section);
+  
+  // FPS counter display (integrated stats.js)
   const fpsDisplay = document.createElement('div');
   fpsDisplay.style.cssText = `
     margin-bottom: 12px;
-    background: rgba(0, 100, 200, 0.2);
+    background: rgba(0, 100, 200, 0.15);
     border-radius: 4px;
     border: 1px solid rgba(0, 150, 255, 0.3);
     padding: 4px;
@@ -456,15 +516,12 @@ function createUI(_clips: THREE.AnimationClip[]): void {
   stats.dom.style.height = '48px';
   
   fpsDisplay.appendChild(stats.dom);
-  content.appendChild(fpsDisplay);
+  perfSection.content.appendChild(fpsDisplay);
   
   // FPS limiter control
   const fpsControl = document.createElement('div');
   fpsControl.style.cssText = `
-    margin-bottom: 12px;
-    padding: 8px;
-    background: rgba(50, 50, 50, 0.5);
-    border-radius: 4px;
+    margin-bottom: 0;
   `;
   
   const fpsLabel = document.createElement('label');
@@ -476,8 +533,8 @@ function createUI(_clips: THREE.AnimationClip[]): void {
   
   const fpsText = document.createElement('span');
   fpsText.textContent = `FPS Cap: ${targetFPS}`;
-  fpsText.style.fontSize = '11px';
-  fpsText.style.opacity = '0.8';
+  fpsText.style.fontSize = '10px';
+  fpsText.style.opacity = '0.9';
   
   const fpsSlider = document.createElement('input');
   fpsSlider.type = 'range';
@@ -499,27 +556,11 @@ function createUI(_clips: THREE.AnimationClip[]): void {
   fpsLabel.appendChild(fpsText);
   fpsLabel.appendChild(fpsSlider);
   fpsControl.appendChild(fpsLabel);
-  content.appendChild(fpsControl);
+  perfSection.content.appendChild(fpsControl);
   
-  // ========== LIGHTING CONTROLS ==========
-  const lightingSection = document.createElement('div');
-  lightingSection.style.cssText = `
-    margin-bottom: 12px;
-    padding: 8px;
-    background: rgba(80, 60, 40, 0.3);
-    border: 1px solid rgba(255, 180, 100, 0.3);
-    border-radius: 4px;
-  `;
-  
-  const lightingTitle = document.createElement('div');
-  lightingTitle.textContent = '💡 Lighting';
-  lightingTitle.style.cssText = `
-    font-weight: bold;
-    margin-bottom: 8px;
-    font-size: 11px;
-    color: #ffb464;
-  `;
-  lightingSection.appendChild(lightingTitle);
+  // ========== LIGHTING SECTION ==========
+  const lightSection = createSection('💡 Lighting', 'rgba(80, 60, 40, 0.3)');
+  content.appendChild(lightSection.section);
   
   // Helper function to create a slider control
   function createSlider(label: string, min: number, max: number, value: number, step: number, onChange: (value: number) => void) {
@@ -632,7 +673,7 @@ function createUI(_clips: THREE.AnimationClip[]): void {
   }
   
   // Directional Light Intensity
-  lightingSection.appendChild(createSlider('Dir Light', 0, 5, 
+  lightSection.content.appendChild(createSlider('Dir Light', 0, 5, 
     directionalLight?.intensity || 1, 0.1, (val) => {
       if (directionalLight) directionalLight.intensity = val;
     }
@@ -640,114 +681,101 @@ function createUI(_clips: THREE.AnimationClip[]): void {
   
   // Directional Light Color
   if (directionalLight) {
-    lightingSection.appendChild(createColorPicker('Dir Color', directionalLight.color, (color) => {
+    lightSection.content.appendChild(createColorPicker('Dir Color', directionalLight.color, (color) => {
       if (directionalLight) directionalLight.color.copy(color);
     }));
   }
   
   // Hemisphere Light Intensity
-  lightingSection.appendChild(createSlider('Ambient', 0, 5, 
+  lightSection.content.appendChild(createSlider('Ambient', 0, 5, 
     ambientFill.intensity, 0.1, (val) => {
       ambientFill.intensity = val;
     }
   ));
   
   // Hemisphere Sky Color
-  lightingSection.appendChild(createColorPicker('Sky Color', ambientFill.color, (color) => {
+  lightSection.content.appendChild(createColorPicker('Sky Color', ambientFill.color, (color) => {
     ambientFill.color.copy(color);
   }));
   
   // Hemisphere Ground Color
-  lightingSection.appendChild(createColorPicker('Ground Color', ambientFill.groundColor, (color) => {
+  lightSection.content.appendChild(createColorPicker('Ground Color', ambientFill.groundColor, (color) => {
     ambientFill.groundColor.copy(color);
   }));
   
   // Tone Mapping Exposure
-  lightingSection.appendChild(createSlider('Exposure', 0.1, 3, 
+  lightSection.content.appendChild(createSlider('Exposure', 0.1, 3, 
     renderer.toneMappingExposure, 0.1, (val) => {
       renderer.toneMappingExposure = val;
     }
   ));
   
   // Shadow controls
-  lightingSection.appendChild(createCheckbox('Shadows', renderer.shadowMap.enabled, (checked) => {
+  lightSection.content.appendChild(createCheckbox('Shadows', renderer.shadowMap.enabled, (checked) => {
     renderer.shadowMap.enabled = checked;
     if (directionalLight) directionalLight.castShadow = checked;
   }));
   
   // Shadow bias (fixes shadow acne / dark shadows)
   if (directionalLight) {
-    lightingSection.appendChild(createSlider('Shadow Bias', -0.01, 0.01, 
+    lightSection.content.appendChild(createSlider('Shadow Bias', -0.01, 0.01, 
       directionalLight.shadow.bias, 0.0001, (val) => {
         if (directionalLight) directionalLight.shadow.bias = val;
       }
     ));
   }
   
-  content.appendChild(lightingSection);
+  // ========== ANIMATION SECTION ==========
+  const animSection = createSection('🎬 Animation', 'rgba(120, 60, 120, 0.3)');
+  content.appendChild(animSection.section);
   
   // Skeleton toggle
-  const skeletonToggle = document.createElement('label');
-  skeletonToggle.style.cssText = `
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 8px;
-    cursor: pointer;
-  `;
-  const checkbox = document.createElement('input');
-  checkbox.type = 'checkbox';
-  checkbox.onchange = (e) => toggleSkeleton((e.target as HTMLInputElement).checked);
-  checkbox.style.cursor = 'pointer';
-  skeletonToggle.appendChild(checkbox);
-  const label = document.createElement('span');
-  label.textContent = 'Show Skeleton';
-  skeletonToggle.appendChild(label);
-  content.appendChild(skeletonToggle);
+  animSection.content.appendChild(createCheckbox('Show Skeleton', false, (checked) => {
+    toggleSkeleton(checked);
+  }));
   
-  // Gyro calibration button (mobile only)
+  // Gyro controls (mobile only)
   if (isMobile) {
     const gyroButton = document.createElement('button');
-    gyroButton.textContent = '🎯 Calibrate Gyro';
+    gyroButton.textContent = useGyro ? '📱 Gyro Active' : '📱 Enable Gyro';
     gyroButton.style.cssText = `
       width: 100%;
       padding: 8px;
       margin-top: 8px;
-      background: rgba(100, 150, 255, 0.3);
-      border: 1px solid rgba(100, 150, 255, 0.5);
+      background: ${useGyro ? 'rgba(100, 255, 100, 0.3)' : 'rgba(100, 150, 255, 0.3)'};
+      border: 1px solid ${useGyro ? 'rgba(100, 255, 100, 0.5)' : 'rgba(100, 150, 255, 0.5)'};
       border-radius: 4px;
       color: white;
       cursor: pointer;
       font-family: monospace;
-      font-size: 12px;
+      font-size: 11px;
     `;
-    gyroButton.onclick = () => {
-      calibrateGyro();
-      // Visual feedback
-      gyroButton.textContent = '✓ Calibrated!';
-      gyroButton.style.background = 'rgba(100, 255, 100, 0.3)';
-      gyroButton.style.borderColor = 'rgba(100, 255, 100, 0.5)';
-      setTimeout(() => {
-        gyroButton.textContent = '🎯 Calibrate Gyro';
-        gyroButton.style.background = 'rgba(100, 150, 255, 0.3)';
-        gyroButton.style.borderColor = 'rgba(100, 150, 255, 0.5)';
-      }, 1500);
-    };
-    content.appendChild(gyroButton);
     
-    // Add gyro status indicator
-    const gyroStatus = document.createElement('div');
-    gyroStatus.style.cssText = `
-      margin-top: 8px;
-      padding: 6px;
-      background: rgba(50, 50, 50, 0.5);
-      border-radius: 4px;
-      font-size: 10px;
-      text-align: center;
-      opacity: 0.7;
-    `;
-    gyroStatus.textContent = useGyro ? '📱 Gyro Active' : '🖱️ Mouse Active';
-    content.appendChild(gyroStatus);
+    gyroButton.onclick = async () => {
+      if (!useGyro) {
+        // Request permission on first click
+        await initGyro();
+        if (useGyro) {
+          gyroButton.textContent = '📱 Gyro Active';
+          gyroButton.style.background = 'rgba(100, 255, 100, 0.3)';
+          gyroButton.style.borderColor = 'rgba(100, 255, 100, 0.5)';
+          calibrateGyro();
+        } else {
+          gyroButton.textContent = '❌ Permission Denied';
+          gyroButton.style.background = 'rgba(255, 100, 100, 0.3)';
+          gyroButton.style.borderColor = 'rgba(255, 100, 100, 0.5)';
+        }
+      } else {
+        // Recalibrate
+        calibrateGyro();
+        gyroButton.textContent = '✓ Calibrated!';
+        setTimeout(() => {
+          gyroButton.textContent = '📱 Gyro Active';
+        }, 1500);
+      }
+    };
+    
+    animSection.content.appendChild(gyroButton);
   }
   
   document.body.appendChild(panel);
@@ -1057,17 +1085,6 @@ async function loadAll(): Promise<void> {
   console.log(`  Character Y: ${charGltf.scene.position.y.toFixed(3)}m`);
   
   console.log('\n✅ Scene loaded successfully');
-  
-  // Initialize gyroscope on mobile devices
-  if (isMobile) {
-    // Auto-calibrate to current position
-    setTimeout(() => {
-      calibrateGyro();
-    }, 1000); // Wait 1 second for gyro values to stabilize
-    
-    // Request permission and start gyro
-    await initGyro();
-  }
 }
 loadAll().catch(err => {
   console.error('Error loading models:', err);
