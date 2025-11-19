@@ -56,7 +56,7 @@ let environmentRoot: THREE.Object3D | null = null;
 
 // Light references for debug controls
 let directionalLight: THREE.DirectionalLight | null = null;
-let characterLightMultiplier = 3.0; // Character receives 3x more light than environment
+let characterLightMultiplier = 30.0; // Character receives 30x more light than environment
 let characterMaterials: THREE.Material[] = []; // Store character materials for light adjustment
 
 // Network stats tracking
@@ -822,8 +822,8 @@ function createUI(_clips: THREE.AnimationClip[]): void {
   }
   
   // Character Light Multiplier
-  lightSection.content.appendChild(createSlider('Char Light Mult', 0.5, 10, 
-    characterLightMultiplier, 0.1, (val) => {
+  lightSection.content.appendChild(createSlider('Char Light Mult', 0.5, 100, 
+    characterLightMultiplier, 0.5, (val) => {
       applyCharacterLightMultiplier(val);
     }
   ));
