@@ -57,6 +57,11 @@ let environmentRoot: THREE.Object3D | null = null;
 // Light references for debug controls
 let directionalLight: THREE.DirectionalLight | null = null;
 
+// Network stats tracking
+let totalBytesDownloaded = 0;
+let glbBytesDownloaded = 0;
+let textureBytesDownloaded = 0;
+
 const canvas = document.getElementById('c') as HTMLCanvasElement;
 const renderer = new THREE.WebGLRenderer({ 
   canvas, 
@@ -612,13 +617,35 @@ function createUI(_clips: THREE.AnimationClip[]): void {
     return row;
   }
   
-  statsList.appendChild(createStatRow('Draw Calls:', 'stat-draw-calls'));
+  statsList.appendChild(createStatRow('Draw Calls/Frame:', 'stat-draw-calls'));
   statsList.appendChild(createStatRow('Triangles:', 'stat-triangles'));
   statsList.appendChild(createStatRow('Geometries:', 'stat-geometries'));
   statsList.appendChild(createStatRow('Textures:', 'stat-textures'));
-  statsList.appendChild(createStatRow('Programs:', 'stat-programs'));
+  statsList.appendChild(createStatRow('Shader Programs:', 'stat-programs'));
   statsList.appendChild(createStatRow('Objects:', 'stat-objects'));
   statsList.appendChild(createStatRow('Lights:', 'stat-lights'));
+  
+  // Add separator for network stats
+  const separator = document.createElement('div');
+  separator.style.cssText = `
+    margin: 6px 0;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+  `;
+  statsList.appendChild(separator);
+  
+  const networkTitle = document.createElement('div');
+  networkTitle.textContent = '📦 Network Load';
+  networkTitle.style.cssText = `
+    font-weight: bold;
+    margin-bottom: 4px;
+    opacity: 0.9;
+    font-size: 9px;
+  `;
+  statsList.appendChild(networkTitle);
+  
+  statsList.appendChild(createStatRow('Total Downloaded:', 'stat-download-size'));
+  statsList.appendChild(createStatRow('GLB Files:', 'stat-glb-size'));
+  statsList.appendChild(createStatRow('Textures:', 'stat-texture-size'));
   
   const memoryLabel = document.createElement('div');
   memoryLabel.style.cssText = `
@@ -749,8 +776,8 @@ function createUI(_clips: THREE.AnimationClip[]): void {
   }
   
   // Directional Light Intensity
-  lightSection.content.appendChild(createSlider('Dir Light', 0, 20, 
-    directionalLight?.intensity || 10, 0.1, (val) => {
+  lightSection.content.appendChild(createSlider('Direct Light', 0, 100, 
+    directionalLight?.intensity || 25, 0.5, (val) => {
       if (directionalLight) directionalLight.intensity = val;
     }
   ));
@@ -956,22 +983,39 @@ function createUI(_clips: THREE.AnimationClip[]): void {
   document.body.appendChild(panel);
 }
 
+// Helper to load GLB with size tracking
+async function loadGLBWithStats(url: string): Promise<any> {
+  const response = await fetch(url);
+  const contentLength = parseInt(response.headers.get('content-length') || '0');
+  const blob = await response.blob();
+  const actualSize = blob.size;
+  
+  glbBytesDownloaded += actualSize;
+  totalBytesDownloaded += actualSize;
+  
+  const objectUrl = URL.createObjectURL(blob);
+  const gltfData = await gltf.loadAsync(objectUrl);
+  URL.revokeObjectURL(objectUrl);
+  
+  return gltfData;
+}
+
 async function loadAll(): Promise<void> {
   console.log('🎬 Loading scene components...');
   
   // Load environment from ENV_MASTER
   console.log('  🏢 Loading environment GLB...');
-  const envGltf = await gltf.loadAsync('/ENV_ApeEscapeOffice.glb');
+  const envGltf = await loadGLBWithStats('/ENV_ApeEscapeOffice.glb');
   console.log(`    ✓ Environment loaded (${envGltf.scenes[0].children.length} root objects)`);
   
   // Load character from CHAR_MASTER
   console.log('  🦍 Loading character GLB...');
-  const charGltf = await gltf.loadAsync('/CHAR_MrProBonobo.glb');
+  const charGltf = await loadGLBWithStats('/CHAR_MrProBonobo.glb');
   console.log(`    ✓ Character loaded (${charGltf.animations.length} animations)`);
   
   // Load scene (camera + animations) from RT_ANIM
   console.log('  📷 Loading scene GLB (camera + animations)...');
-  const sceneGltf = await gltf.loadAsync('/RT_SCENE_ApeEscape.glb');
+  const sceneGltf = await loadGLBWithStats('/RT_SCENE_ApeEscape.glb');
   console.log(`    ✓ Scene loaded (${sceneGltf.animations.length} animation clips)`);
   
   // Add environment to scene
@@ -1203,7 +1247,7 @@ async function loadAll(): Promise<void> {
       // Adjust directional light intensity from GLB
       if (obj instanceof THREE.DirectionalLight) {
         directionalLight = obj; // Store reference for debug controls
-        obj.intensity = 10; // Set to default value of 10
+        obj.intensity = 25; // Set to default value of 25
         obj.castShadow = true;
         
         // Adaptive shadow quality based on device
@@ -1399,6 +1443,29 @@ function tick(currentTime: number = 0): void {
   
   if (objectsEl) objectsEl.textContent = objectCount.toString();
   if (lightsEl) lightsEl.textContent = lightCount.toString();
+  
+  // Update network stats
+  function formatBytes(bytes: number): string {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  }
+  
+  // Calculate texture memory (estimate based on renderer info)
+  const textureCount = info.memory.textures;
+  // Rough estimate: assume average 2MB per texture (highly variable in reality)
+  const estimatedTextureSize = textureCount * 2 * 1024 * 1024;
+  textureBytesDownloaded = estimatedTextureSize;
+  
+  const downloadSizeEl = document.getElementById('stat-download-size');
+  const glbSizeEl = document.getElementById('stat-glb-size');
+  const textureSizeEl = document.getElementById('stat-texture-size');
+  
+  if (downloadSizeEl) downloadSizeEl.textContent = formatBytes(totalBytesDownloaded + textureBytesDownloaded);
+  if (glbSizeEl) glbSizeEl.textContent = formatBytes(glbBytesDownloaded);
+  if (textureSizeEl) textureSizeEl.textContent = formatBytes(estimatedTextureSize) + ' (est)';
   
   stats.end();
 }
