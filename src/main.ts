@@ -56,6 +56,8 @@ let environmentRoot: THREE.Object3D | null = null;
 
 // Light references for debug controls
 let directionalLight: THREE.DirectionalLight | null = null;
+let characterLightMultiplier = 3.0; // Character receives 3x more light than environment
+let characterMaterials: THREE.Material[] = []; // Store character materials for light adjustment
 
 // Network stats tracking
 let totalBytesDownloaded = 0;
@@ -147,6 +149,36 @@ function calibrateGyro() {
   gyroCalibrationBeta = gyroBeta;
   gyroCalibrationGamma = gyroGamma;
   console.log('🎯 Gyroscope calibrated');
+}
+
+// Apply character light multiplier to character materials
+function applyCharacterLightMultiplier(multiplier: number) {
+  characterLightMultiplier = multiplier;
+  
+  characterMaterials.forEach((material) => {
+    if (material instanceof THREE.MeshStandardMaterial || material instanceof THREE.MeshPhysicalMaterial) {
+      // Store original emissive if not already stored
+      if (!(material as any)._originalEmissiveIntensity) {
+        (material as any)._originalEmissiveIntensity = material.emissiveIntensity || 0;
+      }
+      
+      // Adjust emissive to simulate receiving more light
+      // We use a subtle emissive boost rather than actually changing light intensity
+      const boost = (multiplier - 1.0) * 0.15; // Scale down the effect
+      material.emissiveIntensity = ((material as any)._originalEmissiveIntensity || 0) + boost;
+      
+      // Also slightly boost the material's overall color response to light
+      if (!(material as any)._originalColor) {
+        (material as any)._originalColor = material.color.clone();
+      }
+      
+      // Brighten the base color slightly based on multiplier
+      const brightnessBoost = 1.0 + (multiplier - 1.0) * 0.15;
+      material.color.copy((material as any)._originalColor).multiplyScalar(brightnessBoost);
+      
+      material.needsUpdate = true;
+    }
+  });
 }
 
 // Track mouse movement (desktop only)
@@ -789,6 +821,13 @@ function createUI(_clips: THREE.AnimationClip[]): void {
     }));
   }
   
+  // Character Light Multiplier
+  lightSection.content.appendChild(createSlider('Char Light Mult', 0.5, 10, 
+    characterLightMultiplier, 0.1, (val) => {
+      applyCharacterLightMultiplier(val);
+    }
+  ));
+  
   // Directional Light (sun)
   const dirLightLabel = document.createElement('div');
   dirLightLabel.textContent = '☀️ Sun Light';
@@ -1135,6 +1174,16 @@ async function loadAll(): Promise<void> {
   charGltf.scene.traverse((obj: THREE.Object3D) => {
     if (obj instanceof THREE.SkinnedMesh) {
       skinnedMeshes.push(obj);
+      
+      // Store character materials for light intensity adjustment
+      if (obj.material) {
+        if (Array.isArray(obj.material)) {
+          characterMaterials.push(...obj.material);
+        } else {
+          characterMaterials.push(obj.material);
+        }
+      }
+      
       // Check if mesh has a local position offset
       console.log(`\n🔍 Character mesh "${obj.name}" local position: (${obj.position.x.toFixed(3)}, ${obj.position.y.toFixed(3)}, ${obj.position.z.toFixed(3)})`);
       
@@ -1302,6 +1351,10 @@ async function loadAll(): Promise<void> {
   console.log('\n📊 Final position check:');
   console.log(`  Environment Y: ${sceneRoot?.position.y.toFixed(3)}m`);
   console.log(`  Character Y: ${charGltf.scene.position.y.toFixed(3)}m`);
+  
+  // Apply initial character light multiplier
+  console.log(`\n💡 Applying character light multiplier: ${characterLightMultiplier}x`);
+  applyCharacterLightMultiplier(characterLightMultiplier);
   
   console.log('\n✅ Scene loaded successfully');
 }
