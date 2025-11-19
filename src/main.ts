@@ -562,6 +562,78 @@ function createUI(_clips: THREE.AnimationClip[]): void {
   fpsControl.appendChild(fpsLabel);
   perfSection.content.appendChild(fpsControl);
   
+  // Performance statistics display
+  const perfStatsContainer = document.createElement('div');
+  perfStatsContainer.style.cssText = `
+    margin-top: 12px;
+    padding: 8px;
+    background: rgba(0, 100, 200, 0.15);
+    border-radius: 4px;
+    border: 1px solid rgba(0, 150, 255, 0.3);
+    font-size: 10px;
+    line-height: 1.6;
+  `;
+  
+  const perfStatsTitle = document.createElement('div');
+  perfStatsTitle.textContent = '📊 Scene Stats';
+  perfStatsTitle.style.cssText = `
+    font-weight: bold;
+    margin-bottom: 6px;
+    opacity: 0.9;
+  `;
+  perfStatsContainer.appendChild(perfStatsTitle);
+  
+  // Create stats display elements
+  const statsList = document.createElement('div');
+  statsList.style.cssText = `
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  `;
+  
+  function createStatRow(label: string, id: string) {
+    const row = document.createElement('div');
+    row.style.cssText = `
+      display: flex;
+      justify-content: space-between;
+      opacity: 0.85;
+    `;
+    const labelEl = document.createElement('span');
+    labelEl.textContent = label;
+    const valueEl = document.createElement('span');
+    valueEl.id = id;
+    valueEl.style.cssText = `
+      font-weight: bold;
+      color: #6cf;
+    `;
+    valueEl.textContent = '0';
+    row.appendChild(labelEl);
+    row.appendChild(valueEl);
+    return row;
+  }
+  
+  statsList.appendChild(createStatRow('Draw Calls:', 'stat-draw-calls'));
+  statsList.appendChild(createStatRow('Triangles:', 'stat-triangles'));
+  statsList.appendChild(createStatRow('Geometries:', 'stat-geometries'));
+  statsList.appendChild(createStatRow('Textures:', 'stat-textures'));
+  statsList.appendChild(createStatRow('Programs:', 'stat-programs'));
+  statsList.appendChild(createStatRow('Objects:', 'stat-objects'));
+  statsList.appendChild(createStatRow('Lights:', 'stat-lights'));
+  
+  const memoryLabel = document.createElement('div');
+  memoryLabel.style.cssText = `
+    margin-top: 6px;
+    padding-top: 6px;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    font-size: 9px;
+    opacity: 0.7;
+  `;
+  memoryLabel.textContent = 'Stats update every frame';
+  statsList.appendChild(memoryLabel);
+  
+  perfStatsContainer.appendChild(statsList);
+  perfSection.content.appendChild(perfStatsContainer);
+  
   // ========== LIGHTING SECTION ==========
   const lightSection = createSection('💡 Lighting', 'rgba(80, 60, 40, 0.3)');
   content.appendChild(lightSection.section);
@@ -1296,6 +1368,37 @@ function tick(currentTime: number = 0): void {
   camera.lookAt(currentLookAtTarget);
   
   renderer.render(scene, camera);
+  
+  // Update performance stats display
+  const info = renderer.info;
+  const drawCallsEl = document.getElementById('stat-draw-calls');
+  const trianglesEl = document.getElementById('stat-triangles');
+  const geometriesEl = document.getElementById('stat-geometries');
+  const texturesEl = document.getElementById('stat-textures');
+  const programsEl = document.getElementById('stat-programs');
+  const objectsEl = document.getElementById('stat-objects');
+  const lightsEl = document.getElementById('stat-lights');
+  
+  if (drawCallsEl) drawCallsEl.textContent = info.render.calls.toString();
+  if (trianglesEl) trianglesEl.textContent = info.render.triangles.toLocaleString();
+  if (geometriesEl) geometriesEl.textContent = info.memory.geometries.toString();
+  if (texturesEl) texturesEl.textContent = info.memory.textures.toString();
+  if (programsEl) programsEl.textContent = info.programs?.length.toString() || '0';
+  
+  // Count objects and lights in scene
+  let objectCount = 0;
+  let lightCount = 0;
+  scene.traverse((obj) => {
+    if (obj instanceof THREE.Mesh || obj instanceof THREE.SkinnedMesh) {
+      objectCount++;
+    }
+    if (obj instanceof THREE.Light) {
+      lightCount++;
+    }
+  });
+  
+  if (objectsEl) objectsEl.textContent = objectCount.toString();
+  if (lightsEl) lightsEl.textContent = lightCount.toString();
   
   stats.end();
 }
