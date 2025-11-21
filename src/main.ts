@@ -57,7 +57,7 @@ let environmentRoot: THREE.Object3D | null = null;
 
 // Light references for debug controls
 let directionalLight: THREE.DirectionalLight | null = null;
-let characterLightMultiplier = 30.0; // Character receives 30x more light than environment
+let characterLightMultiplier = 40.0; // Character receives 40x more light than environment
 let characterMaterials: THREE.Material[] = []; // Store character materials for light adjustment
 
 // Network stats tracking
@@ -622,6 +622,7 @@ function createUI(_clips: THREE.AnimationClip[]): void {
     targetFPS = parseInt((e.target as HTMLInputElement).value);
     frameInterval = 1000 / targetFPS;
     fpsText.textContent = `FPS Cap: ${targetFPS}`;
+    console.log(`FPS cap changed to: ${targetFPS} (interval: ${frameInterval.toFixed(2)}ms)`);
   };
   
   fpsLabel.appendChild(fpsText);
@@ -1002,7 +1003,7 @@ function createUI(_clips: THREE.AnimationClip[]): void {
     
     // Shadow Camera Size Controls
     lightSection.content.appendChild(createSlider('Shadow Cam Width', 1, 50, 
-      16, 0.5, (val) => {
+      10, 0.5, (val) => {
         if (directionalLight) {
           directionalLight.shadow.camera.left = -val;
           directionalLight.shadow.camera.right = val;
@@ -1024,7 +1025,7 @@ function createUI(_clips: THREE.AnimationClip[]): void {
     ));
     
     lightSection.content.appendChild(createSlider('Shadow Cam Depth', 1, 50, 
-      16, 0.5, (val) => {
+      9, 0.5, (val) => {
         if (directionalLight) {
           directionalLight.shadow.camera.far = val;
           directionalLight.shadow.camera.updateProjectionMatrix();
@@ -1033,21 +1034,113 @@ function createUI(_clips: THREE.AnimationClip[]): void {
       }
     ));
     
-    // Shadow map resolution (power of 2)
-    lightSection.content.appendChild(createSlider('Shadow Resolution', 256, 4096, 
-      2048, 256, (val) => {
-        if (directionalLight) {
-          directionalLight.shadow.mapSize.width = val;
-          directionalLight.shadow.mapSize.height = val;
-          // Need to dispose and recreate shadow map for resolution change
-          if (directionalLight.shadow.map) {
-            directionalLight.shadow.map.dispose();
-            directionalLight.shadow.map = null;
-          }
+    // Shadow map resolution (power of 2 only)
+    // Create custom slider that only allows powers of 2
+    const resolutionContainer = document.createElement('div');
+    resolutionContainer.style.cssText = `margin-bottom: 8px;`;
+    
+    const resolutionLabel = document.createElement('label');
+    resolutionLabel.style.cssText = `display: flex; flex-direction: column; gap: 4px;`;
+    
+    const resolutionText = document.createElement('span');
+    resolutionText.textContent = `Shadow Resolution: 4096.00`;
+    resolutionText.style.cssText = `font-size: 10px; opacity: 0.9;`;
+    
+    const resolutionSlider = document.createElement('input');
+    resolutionSlider.type = 'range';
+    resolutionSlider.min = '8'; // 2^8 = 256
+    resolutionSlider.max = '14'; // 2^14 = 16384
+    resolutionSlider.value = '12'; // 2^12 = 4096
+    resolutionSlider.step = '1';
+    resolutionSlider.style.cssText = `width: 100%; cursor: pointer;`;
+    
+    resolutionSlider.oninput = (e) => {
+      const power = parseInt((e.target as HTMLInputElement).value);
+      const val = Math.pow(2, power);
+      resolutionText.textContent = `Shadow Resolution: ${val.toFixed(2)}`;
+      if (directionalLight) {
+        directionalLight.shadow.mapSize.width = val;
+        directionalLight.shadow.mapSize.height = val;
+        // Need to dispose and recreate shadow map for resolution change
+        if (directionalLight.shadow.map) {
+          directionalLight.shadow.map.dispose();
+          directionalLight.shadow.map = null;
         }
       }
-    ));
+    };
+    
+    resolutionLabel.appendChild(resolutionText);
+    resolutionLabel.appendChild(resolutionSlider);
+    resolutionContainer.appendChild(resolutionLabel);
+    lightSection.content.appendChild(resolutionContainer);
   }
+  
+  // Restore Defaults button
+  const restoreButton = document.createElement('button');
+  restoreButton.textContent = '🔄 Restore Lighting Defaults';
+  restoreButton.style.cssText = `
+    width: 100%;
+    padding: 10px;
+    margin-top: 12px;
+    background: rgba(100, 150, 255, 0.3);
+    border: 1px solid rgba(100, 150, 255, 0.5);
+    border-radius: 4px;
+    color: white;
+    cursor: pointer;
+    font-family: monospace;
+    font-size: 12px;
+    font-weight: bold;
+  `;
+  restoreButton.onclick = () => {
+    // Restore all lighting defaults
+    if (directionalLight) {
+      directionalLight.intensity = 25;
+      directionalLight.color.setHex(0xffb338); // Warm orange light
+    }
+    ambientFill.intensity = 1.2;
+    ambientFill.color.setHex(0x87ceeb);
+    ambientFill.groundColor.setHex(0xa3a3a3);
+    ambientLight.intensity = 0.7;
+    ambientLight.color.setHex(0xffcfa8);
+    renderer.toneMappingExposure = 0.9;
+    characterLightMultiplier = 40;
+    applyCharacterLightMultiplier(40);
+    
+    // Restore shadow defaults
+    if (directionalLight) {
+      directionalLight.castShadow = true;
+      directionalLight.shadow.camera.left = -9;
+      directionalLight.shadow.camera.right = 9;
+      directionalLight.shadow.camera.top = 8;
+      directionalLight.shadow.camera.bottom = -8;
+      directionalLight.shadow.camera.far = 16;
+      directionalLight.shadow.camera.updateProjectionMatrix();
+      directionalLight.shadow.mapSize.width = 2048;
+      directionalLight.shadow.mapSize.height = 2048;
+      directionalLight.shadow.bias = -0.0001;
+      directionalLight.shadow.normalBias = 0.02;
+      if (shadowCameraHelper) shadowCameraHelper.update();
+      if (directionalLight.shadow.map) {
+        directionalLight.shadow.map.dispose();
+        directionalLight.shadow.map = null;
+      }
+    }
+    renderer.shadowMap.enabled = true;
+    toggleShadowCamera(false); // Hide helper by default
+    
+    // Visual feedback
+    restoreButton.textContent = '✓ Restored!';
+    restoreButton.style.background = 'rgba(100, 255, 100, 0.3)';
+    restoreButton.style.borderColor = 'rgba(100, 255, 100, 0.5)';
+    setTimeout(() => {
+      restoreButton.textContent = '🔄 Restore Lighting Defaults';
+      restoreButton.style.background = 'rgba(100, 150, 255, 0.3)';
+      restoreButton.style.borderColor = 'rgba(100, 150, 255, 0.5)';
+    }, 1500);
+    
+    console.log('✓ All lighting defaults restored (refresh page to update UI sliders)');
+  };
+  lightSection.content.appendChild(restoreButton);
   
   // ========== ANIMATION SECTION ==========
   const animSection = createSection('🎬 Animation', 'rgba(120, 60, 120, 0.3)');
@@ -1344,6 +1437,18 @@ async function loadAll(): Promise<void> {
         const m = (obj as any).material;
         if (m && m.map) m.map.colorSpace = THREE.SRGBColorSpace;
         
+        // Handle double-sided materials (objects with "DOUBLE" in name)
+        if (obj.name.includes('DOUBLE')) {
+          if (Array.isArray(m)) {
+            m.forEach((mat: THREE.Material) => {
+              mat.side = THREE.DoubleSide;
+            });
+          } else if (m) {
+            m.side = THREE.DoubleSide;
+          }
+          console.log(`  ✓ Double-sided material enabled for: ${obj.name}`);
+        }
+        
         // Handle skydome and ocean backdrop materials
         if ((obj.name === 'Skydome' || obj.name === 'Ocean') && m) {
           // For skydome, replace with unlit material
@@ -1382,6 +1487,7 @@ async function loadAll(): Promise<void> {
       if (obj instanceof THREE.DirectionalLight) {
         directionalLight = obj; // Store reference for debug controls
         obj.intensity = 25; // Set to default value of 25
+        obj.color.setHex(0xffb338); // Default warm light color
         obj.castShadow = true;
         
         // Adaptive shadow quality based on device
@@ -1392,8 +1498,8 @@ async function loadAll(): Promise<void> {
         obj.shadow.mapSize.height = shadowMapSize;
         obj.shadow.camera.near = 0.1;
         obj.shadow.camera.far = 16;
-        obj.shadow.camera.left = -8;
-        obj.shadow.camera.right = 8;
+        obj.shadow.camera.left = -9;
+        obj.shadow.camera.right = 9;
         obj.shadow.camera.top = 8;
         obj.shadow.camera.bottom = -8;
         obj.shadow.bias = -0.0001;
