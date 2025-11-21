@@ -1268,15 +1268,11 @@ async function loadAll(): Promise<void> {
         // Get both local and world positions to see if there's a parent offset
         const localPos = obj.position.clone();
         obj.getWorldPosition(charPosition);
-        // NOTE: We intentionally do NOT copy rotation from the chair
-        // The character should always face forward (0,0,0 rotation)
-        // Only position is taken from the chair
-        charRotation.set(0, 0, 0, 1); // Identity quaternion (no rotation)
+        obj.getWorldQuaternion(charRotation);
         obj.getWorldScale(charScale);
         console.log(`  ✓ Using office chair position (no armature in RT_SCENE)`);
         console.log(`    Chair local: (${localPos.x.toFixed(2)}, ${localPos.y.toFixed(2)}, ${localPos.z.toFixed(2)})`);
         console.log(`    Chair world: (${charPosition.x.toFixed(2)}, ${charPosition.y.toFixed(2)}, ${charPosition.z.toFixed(2)})`);
-        console.log(`    Character rotation: RESET (ignoring chair rotation)`);
         
         // Also check if the chair's parent has an offset
         if (obj.parent && obj.parent !== envGltf.scene) {
