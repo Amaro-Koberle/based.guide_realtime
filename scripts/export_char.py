@@ -75,7 +75,7 @@ def export_character():
             export_animations=True,
             export_anim_single_armature=True,
             export_nla_strips=True,
-            export_def_bones=True,
+            export_def_bones=False,  # Export ALL bones (including control bones for animation)
             export_optimize_animation_size=True,
             
             # Skinning

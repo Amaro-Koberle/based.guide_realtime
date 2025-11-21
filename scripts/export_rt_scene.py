@@ -144,25 +144,23 @@ def export_rt_scene():
     
     # Count objects for export
     print("\n4. Preparing export...")
+    print("   NOTE: Only exporting camera and animations (hiding all meshes)")
     
-    # Strategy: If we have BOTH a library-linked object AND a local override with the same name,
-    # temporarily hide the library-linked one
-    override_objects = {obj.name: obj for obj in all_objects if obj.library is None}
-    
+    # Hide ALL objects except cameras and armatures
+    # Armatures are needed for animation export
     hidden_for_export = []
     for obj in all_objects:
-        # Only hide if: (1) it's library-linked, (2) we have an override with same name
-        if obj.library is not None and obj.name in override_objects:
+        if obj.type not in ['CAMERA', 'ARMATURE']:
             obj.hide_viewport = True
             obj.hide_render = True
             hidden_for_export.append(obj.name)
-            print(f"   • Hiding linked duplicate (override exists): {obj.name}")
     
-    if hidden_for_export:
-        print(f"   ✓ Temporarily hidden {len(hidden_for_export)} linked duplicate(s)")
+    print(f"   ✓ Hidden {len(hidden_for_export)} non-camera/non-armature objects")
     
     export_objects = [obj for obj in all_objects if not obj.hide_viewport]
-    print(f"   Will export {len(export_objects)} objects")
+    cameras_count = len([obj for obj in export_objects if obj.type == 'CAMERA'])
+    armatures_count = len([obj for obj in export_objects if obj.type == 'ARMATURE'])
+    print(f"   Will export {len(export_objects)} objects ({cameras_count} cameras, {armatures_count} armatures)")
     
     # Create output directory if it doesn't exist
     output_dir = os.path.dirname(OUTPUT_GLB)
@@ -170,9 +168,10 @@ def export_rt_scene():
         os.makedirs(output_dir)
         print(f"   Created directory: {output_dir}")
     
-    # Export GLB
+    # Export GLB - ONLY camera and animations, NOT meshes/environment
     print(f"\n5. Exporting to: {OUTPUT_GLB}")
     print("   (Animation bone warnings suppressed for cleaner output)")
+    print("   NOTE: Exporting ONLY camera and animations (no meshes/environment)")
     try:
         bpy.ops.export_scene.gltf(
             filepath=OUTPUT_GLB,
@@ -185,27 +184,27 @@ def export_rt_scene():
             
             # What to export
             export_cameras=True,   # CRITICAL: Include cameras
-            export_lights=True,    # CRITICAL: Include lights
+            export_lights=False,   # Lights are in ENV, not RT_SCENE
             
             # Transform
             export_yup=True,  # +Y Up
             
-            # Geometry
+            # Geometry - DISABLE mesh export!
             export_apply=True,  # Apply modifiers
-            export_texcoords=True,
-            export_normals=True,
-            export_tangents=True,
+            export_texcoords=False,  # No meshes = no texcoords needed
+            export_normals=False,    # No meshes = no normals needed
+            export_tangents=False,   # No meshes = no tangents needed
             # export_colors removed - not available in this Blender version
             
             # Animation
             export_animations=True,
             export_anim_single_armature=True,
             export_nla_strips=True,
-            export_def_bones=True,  # Export deformation bones only
+            export_def_bones=False,  # Export ALL bones (must match character export)
             export_optimize_animation_size=True,
             
-            # Skinning
-            export_skins=True,
+            # Skinning - DISABLE to prevent character export
+            export_skins=False,  # Do NOT export character mesh/armature
             export_all_influences=False,  # Limit to 4 bone influences
             
             # Compression

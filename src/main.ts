@@ -1248,41 +1248,28 @@ async function loadAll(): Promise<void> {
   
   console.log('\n📍 Positioning character...');
   
-  // First, try to find character armature position from RT_SCENE GLB
-  let foundArmaturePosition = false;
-  sceneGltf.scene.traverse((obj: THREE.Object3D) => {
-    if (obj.name && obj.name.includes('Armature_MrProBonobo') && !foundArmaturePosition) {
+  // ALWAYS use office chair position from ENV for character placement
+  // The RT_SCENE armature is only for animation data, not transform data
+  // (Using RT_SCENE armature position would include unwanted parent transforms)
+  envGltf.scene.traverse((obj: THREE.Object3D) => {
+    if (obj.name && obj.name.includes('Office_Chair_Instance')) {
+      // Get both local and world positions to see if there's a parent offset
+      const localPos = obj.position.clone();
       obj.getWorldPosition(charPosition);
       obj.getWorldQuaternion(charRotation);
       obj.getWorldScale(charScale);
-      foundArmaturePosition = true;
-      console.log(`  ✓ Using character armature position from RT_SCENE`);
-      console.log(`    Position: (${charPosition.x.toFixed(2)}, ${charPosition.y.toFixed(2)}, ${charPosition.z.toFixed(2)})`);
+      console.log(`  ✓ Using office chair position from ENV`);
+      console.log(`    Chair local: (${localPos.x.toFixed(2)}, ${localPos.y.toFixed(2)}, ${localPos.z.toFixed(2)})`);
+      console.log(`    Chair world: (${charPosition.x.toFixed(2)}, ${charPosition.y.toFixed(2)}, ${charPosition.z.toFixed(2)})`);
+      
+      // Also check if the chair's parent has an offset
+      if (obj.parent && obj.parent !== envGltf.scene) {
+        const parentWorldPos = new THREE.Vector3();
+        obj.parent.getWorldPosition(parentWorldPos);
+        console.log(`    Parent world: (${parentWorldPos.x.toFixed(2)}, ${parentWorldPos.y.toFixed(2)}, ${parentWorldPos.z.toFixed(2)})`);
+      }
     }
   });
-  
-  // Fallback: use office chair position if no armature found
-  if (!foundArmaturePosition) {
-    envGltf.scene.traverse((obj: THREE.Object3D) => {
-      if (obj.name && obj.name.includes('Office_Chair_Instance')) {
-        // Get both local and world positions to see if there's a parent offset
-        const localPos = obj.position.clone();
-        obj.getWorldPosition(charPosition);
-        obj.getWorldQuaternion(charRotation);
-        obj.getWorldScale(charScale);
-        console.log(`  ✓ Using office chair position (no armature in RT_SCENE)`);
-        console.log(`    Chair local: (${localPos.x.toFixed(2)}, ${localPos.y.toFixed(2)}, ${localPos.z.toFixed(2)})`);
-        console.log(`    Chair world: (${charPosition.x.toFixed(2)}, ${charPosition.y.toFixed(2)}, ${charPosition.z.toFixed(2)})`);
-        
-        // Also check if the chair's parent has an offset
-        if (obj.parent && obj.parent !== envGltf.scene) {
-          const parentWorldPos = new THREE.Vector3();
-          obj.parent.getWorldPosition(parentWorldPos);
-          console.log(`    Parent world: (${parentWorldPos.x.toFixed(2)}, ${parentWorldPos.y.toFixed(2)}, ${parentWorldPos.z.toFixed(2)})`);
-        }
-      }
-    });
-  }
   
   // Add character to scene
   charGltf.scene.position.copy(charPosition);
@@ -1364,6 +1351,25 @@ async function loadAll(): Promise<void> {
       
       // Check if mesh has a local position offset
       console.log(`\n🔍 Character mesh "${obj.name}" local position: (${obj.position.x.toFixed(3)}, ${obj.position.y.toFixed(3)}, ${obj.position.z.toFixed(3)})`);
+      
+      // Check skeleton and bone structure
+      if (obj.skeleton) {
+        console.log(`  Skeleton: ${obj.skeleton.bones.length} bones`);
+        
+        // Check if bindMatrix is identity (should be for properly exported characters)
+        const bindMatrixIsIdentity = obj.bindMatrix.equals(new THREE.Matrix4());
+        console.log(`  Bind matrix is identity: ${bindMatrixIsIdentity}`);
+        if (!bindMatrixIsIdentity) {
+          console.warn(`  ⚠️ Bind matrix is not identity - this may cause deformation issues!`);
+          console.log(`  Bind matrix:`, obj.bindMatrix.elements.slice(0, 16));
+        }
+        
+        // Check root bone position
+        if (obj.skeleton.bones.length > 0) {
+          const rootBone = obj.skeleton.bones[0];
+          console.log(`  Root bone: "${rootBone.name}" at (${rootBone.position.x.toFixed(3)}, ${rootBone.position.y.toFixed(3)}, ${rootBone.position.z.toFixed(3)})`);
+        }
+      }
       
       // Check parent hierarchy
       let parent = obj.parent;
