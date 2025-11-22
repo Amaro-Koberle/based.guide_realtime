@@ -65,25 +65,76 @@ let totalBytesDownloaded = 0;
 let glbBytesDownloaded = 0;
 let textureBytesDownloaded = 0;
 
-const canvas = document.getElementById('c') as HTMLCanvasElement;
-const renderer = new THREE.WebGLRenderer({ 
-  canvas, 
-  antialias: true,
-  powerPreference: 'high-performance', // Use dedicated GPU if available
-  stencil: false, // Disable stencil buffer if not needed
-});
-// Cap pixel ratio to reduce rendering load (especially on Retina/4K displays)
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.outputColorSpace = THREE.SRGBColorSpace;
-renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 0.9; // Adjusted exposure for balanced lighting
+// Scene globals - will be initialized when canvas is ready
+let canvas: HTMLCanvasElement;
+let renderer: THREE.WebGLRenderer;
+let scene: THREE.Scene;
+let camera: THREE.PerspectiveCamera;
+let getCanvasSize: () => { width: number; height: number };
 
-const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x111111); // Will be updated when skydome loads
+// Wait for canvas to be available
+function initScene() {
+  canvas = document.getElementById('c') as HTMLCanvasElement;
+  if (!canvas) {
+    setTimeout(initScene, 100);
+    return;
+  }
 
-const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 2000);
-camera.position.set(4, 3, 6);
+  getCanvasSize = () => {
+    const rect = canvas.getBoundingClientRect();
+    return { width: rect.width, height: rect.height };
+  };
+
+  const { width, height } = getCanvasSize();
+
+  renderer = new THREE.WebGLRenderer({ 
+    canvas, 
+    antialias: true,
+    powerPreference: 'high-performance', // Use dedicated GPU if available
+    stencil: false, // Disable stencil buffer if not needed
+  });
+  // Cap pixel ratio to reduce rendering load (especially on Retina/4K displays)
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setSize(width, height);
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 0.9; // Adjusted exposure for balanced lighting
+
+  scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x111111); // Will be updated when skydome loads
+
+  camera = new THREE.PerspectiveCamera(50, width / height, 0.1, 2000);
+  camera.position.set(4, 3, 6);
+  
+  // Enable shadow rendering
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+  // Hemisphere light for fake GI - will be updated with skydome color
+  ambientFill = new THREE.HemisphereLight(
+    0x87ceeb, // Default sky color (will be replaced with skydome emissive)
+    0xa3a3a3, // Ground color - light gray for better ceiling visibility
+    1.2       // Intensity (increased for softer overall lighting)
+  );
+  scene.add(ambientFill);
+
+  // Additional ambient light to brighten dark areas (ceilings, under objects)
+  ambientLight = new THREE.AmbientLight(0xffcfa8, 0.7); // Warm peach fill light
+  scene.add(ambientLight);
+  
+  // Initialize loaders
+  gltf = new GLTFLoader();
+  ktx2 = new KTX2Loader()
+    .setTranscoderPath('https://unpkg.com/three/examples/jsm/libs/basis/')
+    .detectSupport(renderer);
+  gltf.setKTX2Loader(ktx2);
+  gltf.setMeshoptDecoder(MeshoptDecoder as any);
+  
+  // Setup input listeners now that canvas is ready
+  setupInputListeners();
+  
+  console.log('✅ Scene initialized');
+}
 
 // Adaptive camera system (mouse on desktop, gyro on mobile)
 let mouseX = 0;
@@ -182,63 +233,50 @@ function applyCharacterLightMultiplier(multiplier: number) {
   });
 }
 
-// Track mouse movement (desktop only)
-if (!isMobile) {
-  window.addEventListener('mousemove', (event) => {
-    // Normalize mouse position to -1 to 1 range
-    mouseX = (event.clientX / window.innerWidth) * 2 - 1;
-    mouseY = -(event.clientY / window.innerHeight) * 2 + 1; // Invert Y axis
-  });
+// Track mouse movement (desktop only) - will be initialized after canvas is ready
+function setupInputListeners() {
+  if (!canvas) return;
+  
+  if (!isMobile) {
+    window.addEventListener('mousemove', (event) => {
+      // Normalize mouse position to -1 to 1 range
+      mouseX = (event.clientX / window.innerWidth) * 2 - 1;
+      mouseY = -(event.clientY / window.innerHeight) * 2 + 1; // Invert Y axis
+    });
 
-  // Track mouse clicks for zoom
-  canvas.addEventListener('mousedown', () => {
-    isZooming = true;
-  });
+    // Track mouse clicks for zoom
+    canvas.addEventListener('mousedown', () => {
+      isZooming = true;
+    });
 
-  canvas.addEventListener('mouseup', () => {
-    isZooming = false;
-  });
+    canvas.addEventListener('mouseup', () => {
+      isZooming = false;
+    });
 
-  canvas.addEventListener('mouseleave', () => {
-    isZooming = false;
-  });
-} else {
-  // Track touch for zoom on mobile
-  canvas.addEventListener('touchstart', () => {
-    isZooming = true;
-  });
+    canvas.addEventListener('mouseleave', () => {
+      isZooming = false;
+    });
+  } else {
+    // Track touch for zoom on mobile
+    canvas.addEventListener('touchstart', () => {
+      isZooming = true;
+    });
 
-  canvas.addEventListener('touchend', () => {
-    isZooming = false;
-  });
+    canvas.addEventListener('touchend', () => {
+      isZooming = false;
+    });
 
-  canvas.addEventListener('touchcancel', () => {
-    isZooming = false;
-  });
+    canvas.addEventListener('touchcancel', () => {
+      isZooming = false;
+    });
+  }
 }
 
-// Enable shadow rendering
-renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-
-// Hemisphere light for fake GI - will be updated with skydome color
-const ambientFill = new THREE.HemisphereLight(
-  0x87ceeb, // Default sky color (will be replaced with skydome emissive)
-  0xa3a3a3, // Ground color - light gray for better ceiling visibility
-  1.2       // Intensity (increased for softer overall lighting)
-);
-scene.add(ambientFill);
-
-// Additional ambient light to brighten dark areas (ceilings, under objects)
-const ambientLight = new THREE.AmbientLight(0xffcfa8, 0.7); // Warm peach fill light
-scene.add(ambientLight);
-
-const gltf = new GLTFLoader();
-const ktx2 = new KTX2Loader()
-  .setTranscoderPath('https://unpkg.com/three/examples/jsm/libs/basis/')
-  .detectSupport(renderer);
-gltf.setKTX2Loader(ktx2);
-gltf.setMeshoptDecoder(MeshoptDecoder as any);
+// Loaders and lights will be initialized after scene is ready
+let gltf: GLTFLoader;
+let ktx2: KTX2Loader;
+let ambientFill: THREE.HemisphereLight;
+let ambientLight: THREE.AmbientLight;
 
 // Animation helper functions
 function debugListClips(clips: THREE.AnimationClip[]): void {
@@ -449,7 +487,7 @@ function createUI(_clips: THREE.AnimationClip[]): void {
   panel.style.cssText = `
     position: absolute;
     top: 10px;
-    left: 10px;
+    right: 10px;
     background: rgba(0, 0, 0, 0.8);
     color: white;
     padding: 0;
@@ -459,6 +497,7 @@ function createUI(_clips: THREE.AnimationClip[]): void {
     min-width: 250px;
     max-width: 300px;
     overflow: hidden;
+    z-index: 1000;
   `;
   
   // Header with toggle
@@ -1554,15 +1593,17 @@ async function loadAll(): Promise<void> {
   applyCharacterLightMultiplier(characterLightMultiplier);
   
   console.log('\n✅ Scene loaded successfully');
+  
+  // Start animation loop after scene is loaded
+  tick();
 }
-loadAll().catch(err => {
-  console.error('Error loading models:', err);
-});
 
 function onResize(): void {
-  camera.aspect = window.innerWidth / window.innerHeight;
+  if (!camera || !renderer || !getCanvasSize) return;
+  const { width, height } = getCanvasSize();
+  camera.aspect = width / height;
   camera.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setSize(width, height);
 }
 window.addEventListener('resize', onResize);
 
@@ -1587,6 +1628,9 @@ document.addEventListener('visibilitychange', () => {
 
 function tick(currentTime: number = 0): void {
   requestAnimationFrame(tick);
+  
+  // Don't render if scene not initialized yet
+  if (!renderer || !scene || !camera) return;
   
   // Pause rendering when tab is not visible
   if (!isTabVisible) return;
@@ -1719,4 +1763,15 @@ function tick(currentTime: number = 0): void {
   
   stats.end();
 }
-tick();
+
+// Initialize scene when canvas is ready
+initScene();
+
+// Start loading assets
+setTimeout(() => {
+  if (canvas && renderer && scene && camera) {
+    loadAll().catch(err => {
+      console.error('Error loading models:', err);
+    });
+  }
+}, 100);
