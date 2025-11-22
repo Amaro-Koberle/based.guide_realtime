@@ -55,13 +55,13 @@ export function App() {
   // Desktop layout - side by side
   return (
     <div className="h-screen w-screen overflow-hidden flex">
-      {/* Questionnaire - left */}
-      <div className="w-1/2 h-full overflow-hidden bg-white">
+      {/* Questionnaire - left (1/3) */}
+      <div className="w-1/3 h-full overflow-hidden bg-white">
         <Questionnaire />
       </div>
       
-      {/* 3D Scene - right */}
-      <div className="w-1/2 h-full relative">
+      {/* 3D Scene - right (2/3) */}
+      <div className="w-2/3 h-full relative">
         <canvas id="c" className="w-full h-full block" />
       </div>
     </div>
