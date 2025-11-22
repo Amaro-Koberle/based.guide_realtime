@@ -45,7 +45,7 @@ export function MobileQuestionnaire({ onHeightChange }: MobileQuestionnaireProps
     setIsDragging(false)
   }
 
-  // Auto-expand drawer when user scrolls down in content
+  // Auto-expand drawer proportionally based on scroll position
   useEffect(() => {
     const content = contentRef.current
     if (!content) return
@@ -57,18 +57,30 @@ export function MobileQuestionnaire({ onHeightChange }: MobileQuestionnaireProps
       if (!target.closest('.questionnaire-content')) return
       
       const scrollTop = target.scrollTop
-      const scrollingDown = scrollTop > lastScrollTop.current
-      lastScrollTop.current = scrollTop
+      const scrollHeight = target.scrollHeight
+      const clientHeight = target.clientHeight
       
-      // If user scrolls down and we're not at max height, gradually expand
-      if (scrollingDown && scrollTop > 20 && height < 92) {
-        setHeight(prev => {
-          const newHeight = Math.min(92, prev + 1)
-          // Trigger resize for canvas
-          requestAnimationFrame(() => {
-            window.dispatchEvent(new Event('resize'))
-          })
-          return newHeight
+      // Calculate how much content is scrollable
+      const maxScroll = scrollHeight - clientHeight
+      
+      if (maxScroll <= 0) return // No scrollable content
+      
+      // Calculate scroll percentage (0 to 1)
+      const scrollPercent = Math.min(scrollTop / maxScroll, 1)
+      
+      // Map scroll percentage to drawer height
+      // Start at 70%, expand to 92% as user scrolls
+      const minHeight = 70
+      const maxHeight = 92
+      const targetHeight = minHeight + (scrollPercent * (maxHeight - minHeight))
+      
+      // Only update if significantly different (avoid jitter)
+      if (Math.abs(targetHeight - height) > 0.5) {
+        setHeight(targetHeight)
+        
+        // Trigger resize for canvas
+        requestAnimationFrame(() => {
+          window.dispatchEvent(new Event('resize'))
         })
       }
     }

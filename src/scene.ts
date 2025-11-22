@@ -240,7 +240,10 @@ function setupInputListeners() {
   if (!isMobile) {
     window.addEventListener('mousemove', (event) => {
       // Normalize mouse position to -1 to 1 range
-      mouseX = (event.clientX / window.innerWidth) * 2 - 1;
+      // On desktop, offset the neutral position to the right since cursor will be on left (questionnaire side)
+      const normalizedX = (event.clientX / window.innerWidth) * 2 - 1;
+      const desktopOffset = 0.75; // Shift neutral position to the right
+      mouseX = normalizedX + desktopOffset;
       mouseY = -(event.clientY / window.innerHeight) * 2 + 1; // Invert Y axis
     });
 
@@ -515,7 +518,7 @@ function createUI(_clips: THREE.AnimationClip[]): void {
   `;
   
   const title = document.createElement('span');
-  title.textContent = '🛠️ Dev Panel';
+  title.textContent = '🛠️ 3D Dev Panel';
   
   const toggleIcon = document.createElement('span');
   toggleIcon.textContent = '▼';
@@ -662,10 +665,21 @@ function createUI(_clips: THREE.AnimationClip[]): void {
     frameInterval = 1000 / targetFPS;
     fpsText.textContent = `FPS Cap: ${targetFPS}`;
     console.log(`FPS cap changed to: ${targetFPS} (interval: ${frameInterval.toFixed(2)}ms)`);
+    console.log(`Note: Actual FPS limited by display refresh rate (usually 60Hz on laptops)`);
   };
   
   fpsLabel.appendChild(fpsText);
   fpsLabel.appendChild(fpsSlider);
+  
+  const fpsNote = document.createElement('div');
+  fpsNote.textContent = 'Note: Actual FPS limited by display refresh rate';
+  fpsNote.style.cssText = `
+    font-size: 9px;
+    opacity: 0.6;
+    margin-top: 4px;
+  `;
+  fpsLabel.appendChild(fpsNote);
+  
   fpsControl.appendChild(fpsLabel);
   perfSection.content.appendChild(fpsControl);
   
