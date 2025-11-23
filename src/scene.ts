@@ -1506,6 +1506,15 @@ async function loadAll(): Promise<void> {
             m.side = THREE.DoubleSide;
           }
           console.log(`  ✓ Double-sided material enabled for: ${obj.name}`);
+          
+          // Extra check for flag cloth
+          if (obj.name.toLowerCase().includes('flag')) {
+            console.log(`    Flag mesh details:`);
+            console.log(`      Vertices: ${obj.geometry.attributes.position?.count || 0}`);
+            console.log(`      Visible: ${obj.visible}`);
+            console.log(`      Material opacity: ${m.opacity !== undefined ? m.opacity : 'N/A'}`);
+            console.log(`      Material transparent: ${m.transparent}`);
+          }
         }
         
         // Handle skydome and ocean backdrop materials
@@ -1606,10 +1615,57 @@ async function loadAll(): Promise<void> {
   console.log(`\n💡 Applying character light multiplier: ${characterLightMultiplier}x`);
   applyCharacterLightMultiplier(characterLightMultiplier);
   
+  // Debug: Log scene hierarchy to help diagnose missing objects
+  console.log('\n🔍 Scene Hierarchy Debug:');
+  envGltf.scene.traverse((obj: THREE.Object3D) => {
+    if (obj.name.toLowerCase().includes('flag') || 
+        obj.name.toLowerCase().includes('banana') || 
+        obj.name.toLowerCase().includes('fruit') ||
+        obj.name.toLowerCase().includes('bowl')) {
+      const depth = getObjectDepth(obj);
+      const indent = '  '.repeat(depth);
+      const type = obj instanceof THREE.Mesh ? 'Mesh' : obj.type;
+      const visible = obj.visible ? '✓' : '✗';
+      console.log(`${indent}${visible} ${type}: "${obj.name}"`);
+      
+      if (obj instanceof THREE.Mesh) {
+        const mat = (obj as any).material;
+        const matInfo = Array.isArray(mat) 
+          ? `${mat.length} materials` 
+          : mat ? `${mat.type}, side: ${mat.side === THREE.DoubleSide ? 'DoubleSide' : mat.side === THREE.FrontSide ? 'FrontSide' : 'BackSide'}` 
+          : 'no material';
+        console.log(`${indent}  Material: ${matInfo}`);
+        console.log(`${indent}  Geometry: ${obj.geometry.attributes.position?.count || 0} vertices`);
+        
+        // Extra debug for bananas
+        if (obj.name.toLowerCase().includes('banana')) {
+          const worldPos = new THREE.Vector3();
+          obj.getWorldPosition(worldPos);
+          console.log(`${indent}  Position: local(${obj.position.x.toFixed(2)}, ${obj.position.y.toFixed(2)}, ${obj.position.z.toFixed(2)}) world(${worldPos.x.toFixed(2)}, ${worldPos.y.toFixed(2)}, ${worldPos.z.toFixed(2)})`);
+          console.log(`${indent}  Scale: (${obj.scale.x.toFixed(3)}, ${obj.scale.y.toFixed(3)}, ${obj.scale.z.toFixed(3)})`);
+          if (mat && !Array.isArray(mat)) {
+            console.log(`${indent}  Material opacity: ${mat.opacity}, transparent: ${mat.transparent}, visible: ${mat.visible}`);
+          }
+        }
+      }
+    }
+  });
+  
   console.log('\n✅ Scene loaded successfully');
   
   // Start animation loop after scene is loaded
   tick();
+}
+
+// Helper to get object depth in hierarchy
+function getObjectDepth(obj: THREE.Object3D): number {
+  let depth = 0;
+  let current = obj.parent;
+  while (current) {
+    depth++;
+    current = current.parent;
+  }
+  return depth;
 }
 
 function onResize(): void {
